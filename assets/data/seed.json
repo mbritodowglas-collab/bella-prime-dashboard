@@ -1,1 +1,32 @@
-[{"id": "001", "nome": "Ana Souza", "nivel": "Ascens\u00e3o", "pontuacao": 6, "ultimoTreino": "2025-11-20", "avaliacoes": []}]
+[
+  {
+    "id": "001",
+    "nome": "Ana Souza",
+    "nivel": "Ascensão",
+    "pontuacao": 6,
+    "ultimoTreino": "2025-11-20",
+    "renovacaoDias": 30,
+    "status": "Ativa",
+    "cidade": "Manaus-AM",
+    "contato": "(@ana.souza)",
+    "avaliacoes": [
+      { "data": "2025-10-01", "pontuacao": 3, "nivel": "Fundação" },
+      { "data": "2025-11-20", "pontuacao": 6, "nivel": "Ascensão" }
+    ]
+  },
+  {
+    "id": "002",
+    "nome": "Beatriz Lima",
+    "nivel": "Domínio",
+    "pontuacao": 8,
+    "ultimoTreino": "2025-10-25",
+    "renovacaoDias": 30,
+    "status": "Ativa",
+    "cidade": "Manaus-AM",
+    "contato": "(@bealima)",
+    "avaliacoes": [
+      { "data": "2025-09-30", "pontuacao": 5, "nivel": "Ascensão" },
+      { "data": "2025-10-25", "pontuacao": 8, "nivel": "Domínio" }
+    ]
+  }
+]
