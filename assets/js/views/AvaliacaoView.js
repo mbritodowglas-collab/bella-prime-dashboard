@@ -4,109 +4,145 @@ import { pontuar, classificar } from '../avaliacao.js';
 export const AvaliacaoView = {
   async template(id){
     const c = Store.byId(id);
-    if(!c) 
-      return `<div class="card"><p>Cliente não encontrado.</p><a class="btn btn-outline" href="#/">Voltar</a></div>`;
+    if (!c) return `<div class="card"><h2>Cliente não encontrada</h2></div>`;
+
+    // Link opcional para “oficializar” no Google Forms com pré-preenchimento (WhatsApp/E-mail como ID)
+    const formURL = prefillFormURL(c);
 
     return `
       <section class="card">
-        <a class="btn btn-outline" href="#/cliente/${c.id}">← Voltar ao perfil</a>
-        <h2 style="margin:8px 0 12px 0">Nova avaliação — ${c.nome}</h2>
+        <a href="#/" class="btn btn-outline" style="margin-bottom:10px;">← Voltar</a>
+        <h2>Nova Avaliação — ${escapeHTML(c.nome)}</h2>
+        <p style="margin:8px 0 16px">Registre abaixo para atualizar o painel.
+        <br><small>Para enviar para a planilha oficial, use o botão <b>“Abrir Reavaliação (Google)”</b>.</small></p>
 
-        <form id="form" class="row" autocomplete="off">
-          <div class="card">
-            <label><input type="checkbox" name="estaTreinando" /> Está treinando</label><br />
-            <label>Frequência semanal: 
-              <input class="input" type="number" name="frequenciaSemanal" min="0" max="7" value="3" />
-            </label><br />
-            <label>Qualidade do sono (1–5): 
-              <input class="input" type="number" name="sono" min="1" max="5" value="3" />
-            </label><br />
-            <label>Dor/lesão (0=nenhuma, 1=leve, 2=moderada, 3=limitante): 
-              <input class="input" type="number" name="dorLesao" min="0" max="3" value="0" />
-            </label><br />
-          </div>
+        <div class="grid-2">
+          <label class="field">
+            <span>Está treinando?</span>
+            <select id="estaTreinando" class="input">
+              <option value="true">Sim</option>
+              <option value="false">Não</option>
+            </select>
+          </label>
 
-          <div class="card">
-            <label>Nível de estresse (1–5): 
-              <input class="input" type="number" name="estresse" min="1" max="5" value="3" />
-            </label><br />
-            <label>Comprometimento (1–10): 
-              <input class="input" type="number" name="comprometimento" min="1" max="10" value="6" />
-            </label><br />
-            <label>Plano alimentar: 
-              <select name="planoAlimentar">
-                <option value="nao">Não</option>
-                <option value="parcial">Em parte</option>
-                <option value="sim">Sim</option>
-              </select>
-            </label><br />
-            <label><input type="checkbox" name="acompanhamentoProfissional" /> Acompanhamento profissional</label><br />
-          </div>
-        </form>
+          <label class="field">
+            <span>Frequência semanal</span>
+            <input id="frequenciaSemanal" class="input" type="number" min="0" max="14" placeholder="ex.: 3" />
+          </label>
 
-        <div class="card" id="resultado">
-          <h3 style="margin-top:0">Resultado</h3>
-          <p>Pontuação: <b id="pontuacao">0</b></p>
-          <p>Nível: <b id="nivel">-</b></p>
-          <button class="btn btn-primary" id="salvar">Salvar avaliação</button>
+          <label class="field">
+            <span>Qualidade do sono (1–5)</span>
+            <input id="sono" class="input" type="number" min="1" max="5" placeholder="3" />
+          </label>
+
+          <label class="field">
+            <span>Dor/lesão (0=sem / 1=com)</span>
+            <input id="dorLesao" class="input" type="number" min="0" max="3" placeholder="0" />
+          </label>
+
+          <label class="field">
+            <span>Estresse (1–5)</span>
+            <input id="estresse" class="input" type="number" min="1" max="5" placeholder="3" />
+          </label>
+
+          <label class="field">
+            <span>Comprometimento (1–10)</span>
+            <input id="comprometimento" class="input" type="number" min="1" max="10" placeholder="7" />
+          </label>
+
+          <label class="field">
+            <span>Segue plano alimentar?</span>
+            <select id="planoAlimentar" class="input">
+              <option value="nao">Não</option>
+              <option value="parcial">Parcial</option>
+              <option value="sim">Sim</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>Acompanhamento profissional?</span>
+            <select id="acompanhamentoProfissional" class="input">
+              <option value="false">Não</option>
+              <option value="true">Sim</option>
+            </select>
+          </label>
         </div>
+
+        <div class="row" style="gap:10px;margin-top:14px;">
+          <button class="btn btn-outline" id="calc">Calcular nível</button>
+          <button class="btn btn-primary" id="save" disabled>Salvar avaliação (Painel)</button>
+          ${formURL ? `<a class="btn" href="${formURL}" target="_blank" rel="noopener">Abrir Reavaliação (Google)</a>` : ''}
+        </div>
+
+        <div id="resultado" class="card" style="margin-top:14px; display:none;"></div>
       </section>
     `;
   },
 
   async init(id){
     const c = Store.byId(id);
-    if(!c) return;
+    if (!c) return;
 
     const $ = (s) => document.querySelector(s);
-    const form = document.getElementById('form');
+    const $res = $('#resultado');
+    const $save = $('#save');
 
-    // Lê os valores do formulário
-    function readForm(){
-      const fd = new FormData(form);
-      return {
-        estaTreinando: form.estaTreinando.checked,
-        frequenciaSemanal: Number(fd.get('frequenciaSemanal')),
-        sono: Number(fd.get('sono')),
-        dorLesao: Number(fd.get('dorLesao')),
-        estresse: Number(fd.get('estresse')),
-        comprometimento: Number(fd.get('comprometimento')),
-        planoAlimentar: fd.get('planoAlimentar'),
-        acompanhamentoProfissional: form.acompanhamentoProfissional.checked
-      };
-    }
+    const readForm = () => ({
+      estaTreinando: $('#estaTreinando').value === 'true',
+      frequenciaSemanal: Number($('#frequenciaSemanal').value || 0),
+      sono: Number($('#sono').value || 3),
+      dorLesao: Number($('#dorLesao').value || 0),
+      estresse: Number($('#estresse').value || 3),
+      comprometimento: Number($('#comprometimento').value || 7),
+      planoAlimentar: $('#planoAlimentar').value,
+      acompanhamentoProfissional: $('#acompanhamentoProfissional').value === 'true',
+    });
 
-    // Calcula e exibe o resultado em tempo real
-    function renderResultado(){
-      const respostas = readForm();
-      const p = pontuar(respostas);
+    $('#calc').addEventListener('click', () => {
+      const r = readForm();
+      const p = pontuar(r);
       const n = classificar(p, c.avaliacoes || []);
-      document.getElementById('pontuacao').textContent = p;
-      document.getElementById('nivel').textContent = n;
-      return { p, n };
-    }
 
-    form.addEventListener('input', renderResultado);
-    renderResultado();
+      $res.style.display = 'block';
+      $res.innerHTML = `
+        <h3>Resultado</h3>
+        <p><b>Pontuação:</b> ${p}</p>
+        <p><b>Nível:</b> ${n}</p>
+        <small>Obs.: esta avaliação salva apenas no <b>painel</b>. Para registrar na planilha oficial, use o botão “Abrir Reavaliação (Google)”.</small>
+      `;
+      $save.disabled = false;
+      $save.dataset.p = String(p);
+      $save.dataset.n = n;
+    });
 
-    // Botão Salvar
-    document.getElementById('salvar').addEventListener('click', () => {
-      const { p, n } = renderResultado();
-      const d = new Date();
-      const y = d.getFullYear();
-      const m = String(d.getMonth() + 1).padStart(2, '0');
-      const da = String(d.getDate()).padStart(2, '0');
-      const dataISO = `${y}-${m}-${da}`;
+    $save.addEventListener('click', () => {
+      const p = Number($save.dataset.p || 0);
+      const n = $save.dataset.n || c.nivel;
+      const hoje = todayISO();
 
-      const novo = { data: dataISO, pontuacao: p, nivel: n };
-      c.avaliacoes = [...(c.avaliacoes || []), novo];
-      c.nivel = n;
-      c.pontuacao = p;
-      c.ultimoTreino = dataISO;
-      Store.upsert(c);
+      const novo = { data: hoje, pontuacao: p, nivel: n };
+      const avs = [...(c.avaliacoes || []), novo].sort((a,b)=> a.data.localeCompare(b.data));
 
-      // Redireciona de volta pro perfil
+      const updated = { ...c, avaliacoes: avs, pontuacao: p, nivel: n, ultimoTreino: hoje };
+      Store.upsert(updated);
+
+      alert('Avaliação salva no painel.');
       location.hash = `#/cliente/${c.id}`;
     });
   }
 };
+
+// helpers
+function todayISO(){
+  const d=new Date();
+  const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), da=String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${da}`;
+}
+function escapeHTML(s){
+  return String(s||'').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+}
+function prefillFormURL(c){
+  // Se quiser, coloque aqui a URL do seu Google Forms de REAVALIAÇÃO com o entry do campo WhatsApp/E-mail.
+  // Ex.: return `https://docs.google.com/forms/d/e/FORM_ID/viewform?entry.123456=${encodeURIComponent(c.contato||c.email||'')}`;
+  return ''; // deixe vazio se ainda não tiver o entry id
+}
