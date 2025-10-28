@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Diagnóstico · Bella Prime</title>
+<style>
+  :root{--ok:#2ecc71;--bad:#e74c3c;--warn:#f39c12;--txt:#eaeaea;--bg:#0b0b0b}
+  body{background:var(--bg);color:var(--txt);font:15px/1.5 system-ui,Segoe UI,Inter,Arial;padding:24px}
+  h1{margin:0 0 8px}
+  .hint{color:#aaa;margin:0 0 16px}
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:10px;border-bottom:1px solid #222}
+  th{color:#ccc;text-align:left}
+  .ok{color:var(--ok);font-weight:700}
+  .bad{color:var(--bad);font-weight:700}
+  .warn{color:var(--warn);font-weight:700}
+  code{background:#111;border:1px solid #222;border-radius:6px;padding:2px 6px}
+  .note{margin-top:16px;color:#bbb}
+</style>
+</head>
+<body>
+  <h1>Diagnóstico — Bella Prime</h1>
+  <p class="hint">Este teste verifica se os arquivos estão acessíveis no GitHub Pages (case sensitive). Tudo precisa ficar <span class="ok">OK</span>.</p>
+
+  <table id="tbl">
+    <thead><tr><th>Arquivo</th><th>Status</th><th>Detalhe</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <p class="note">
+    Dicas:<br>
+    • Se aparecer “Unexpected token &lt;”, é 404 (o servidor devolveu HTML em vez do JS). Verifique <b>nome exato</b> e <b>maiúsculas/minúsculas</b>.<br>
+    • Se <code>app.js</code> falhar mas os demais estiverem OK, o erro é interno (imports).<br>
+    • Se <code>seed.json</code> falhar, a UI ainda pode abrir, mas sem dados da seed.<br>
+  </p>
+
+<script>
+(async () => {
+  const files = [
+    './index.html',
+    './assets/css/style.css',
+    './assets/js/app.js',
+    './assets/js/views/dashboardview.js',
+    './assets/js/views/clienteview.js',
+    './assets/js/views/avaliacaoview.js',
+    './assets/js/views/avaliacao.js',
+    './assets/data/seed.json',
+    'https://cdn.jsdelivr.net/npm/chart.js'
+  ];
+
+  const $tbody = document.querySelector('#tbl tbody');
+
+  async function check(url){
+    const row = document.createElement('tr');
+    const tdFile = document.createElement('td');
+    const tdStatus = document.createElement('td');
+    const tdDetail = document.createElement('td');
+    tdFile.textContent = url;
+
+    // HEAD às vezes não é permitido no GH Pages/CDN → usa GET e não faz cache
+    let ok=false, detail='';
+    try{
+      const r = await fetch(url, {cache:'no-store'});
+      const ct = (r.headers.get('content-type')||'').toLowerCase();
+      if(!r.ok){
+        detail = `HTTP ${r.status}`;
+      } else {
+        // tenta ler um pedaço p/ detectar “Unexpected token <”
+        const text = await r.text();
+        if(text.startsWith('<!DOCTYPE html>') || text.startsWith('<html')){
+          // provavelmente 404 de módulo retornando a página (import errado)
+          ok=false; detail='Recebeu HTML (provável 404 de módulo)';
+        } else {
+          ok=true; detail = ct || 'OK';
+        }
+      }
+    } catch(e){
+      ok=false; detail = (e && e.message) ? e.message : String(e);
+    }
+
+    tdStatus.innerHTML = ok ? '<span class="ok">OK</span>' : '<span class="bad">FALHOU</span>';
+    tdDetail.textContent = detail;
+    row.appendChild(tdFile); row.appendChild(tdStatus); row.appendChild(tdDetail);
+    $tbody.appendChild(row);
+  }
+
+  for(const f of files){
+    await check(f);
+  }
+})();
+</script>
+</body>
+</html>
