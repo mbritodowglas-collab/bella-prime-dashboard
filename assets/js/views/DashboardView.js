@@ -1,6 +1,7 @@
 import { Store, statusCalc } from '../app.js';
 
 let chartRef = null; // evita gráficos duplicados
+let toastT = null;   // controla sumiço do toast
 
 export const DashboardView = {
   async template(){
@@ -16,19 +17,19 @@ export const DashboardView = {
 
       <section class="card controls">
         <input class="input" id="q" placeholder="Buscar por nome..." />
-        <select id="nivel">
+        <select id="nivel" class="input">
           <option value="">Todos níveis</option>
           <option>Fundação</option><option>Ascensão</option><option>Domínio</option><option>OverPrime</option>
         </select>
-        <select id="status">
+        <select id="status" class="input">
           <option value="">Todos status</option>
           <option>Ativa</option><option>Perto de vencer</option><option>Vence em breve</option><option>Vencida</option>
         </select>
         <span style="flex:1"></span>
-        <button class="btn btn-outline" id="syncBtn">Atualizar (Google)</button>
-        <button class="btn btn-outline" id="importBtn">Importar</button>
+        <button class="btn btn-outline" id="syncBtn" title="Ler dados da planilha Google">Atualizar (Google)</button>
+        <button class="btn btn-outline" id="importBtn" title="Importar JSON">Importar</button>
         <input type="file" id="file" style="display:none" accept="application/json" />
-        <button class="btn btn-primary" id="exportBtn">Exportar</button>
+        <button class="btn btn-primary" id="exportBtn" title="Exportar JSON">Exportar</button>
       </section>
 
       <section class="card chart-card">
@@ -50,6 +51,8 @@ export const DashboardView = {
         </table>
         <div id="empty" style="display:none;padding:12px;color:#aaa">Sem clientes para exibir.</div>
       </section>
+
+      <div id="toast" style="position:fixed;right:16px;bottom:16px;display:none" class="toast"></div>
     `;
   },
 
@@ -57,7 +60,7 @@ export const DashboardView = {
     const $ = (s) => document.querySelector(s);
 
     // estados iniciais dos filtros
-    $('#q').value = Store.state.filters.q;
+    $('#q').value = Store.state.filters.q || '';
     $('#nivel').value = Store.state.filters.nivel || '';
     $('#status').value = Store.state.filters.status || '';
 
@@ -92,6 +95,7 @@ export const DashboardView = {
             Store.persist();
             chartNiveis(); // atualiza gráfico
             renderTable();
+            toast('Cliente removida.');
           }
         });
       });
@@ -112,6 +116,7 @@ export const DashboardView = {
       chartNiveis();
       renderTable();
       e.target.value = ''; // limpa input
+      toast('Importação concluída.');
     });
 
     // sincronizar com Google Sheets
@@ -126,6 +131,10 @@ export const DashboardView = {
         $('#q').value=''; $('#nivel').value=''; $('#status').value='';
         chartNiveis();
         renderTable();
+        toast('Sincronizado com a planilha.');
+      } catch (err){
+        console.error(err);
+        toast('Falha ao sincronizar', true);
       } finally {
         btn.disabled = false; btn.textContent = old;
       }
@@ -198,4 +207,19 @@ function chartNiveis(){
 
 function escapeHTML(s){
   return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+}
+
+function toast(msg, error=false){
+  const el = document.getElementById('toast');
+  if(!el) return;
+  el.textContent = msg;
+  el.style.display = 'block';
+  el.style.background = error ? 'rgba(183,28,28,.95)' : 'rgba(212,175,55,.95)'; // vermelho/dourado
+  el.style.color = '#0b0b0b';
+  el.style.padding = '10px 14px';
+  el.style.borderRadius = '10px';
+  el.style.fontWeight = '600';
+  el.style.boxShadow = '0 6px 18px rgba(0,0,0,.35)';
+  clearTimeout(toastT);
+  toastT = setTimeout(()=> el.style.display = 'none', 2600);
 }
