@@ -1,3 +1,4 @@
+// Dashboard (lista + filtros + KPIs + gráfico)
 import { Store, statusCalc } from '../app.js';
 
 let chartRef = null; // evita gráficos duplicados
@@ -33,7 +34,7 @@ export const DashboardView = {
       </section>
 
       <section class="card chart-card">
-        <canvas id="chartNiveis" height="120"></canvas>
+        <canvas id="chartNiveis" height="120" aria-label="Distribuição por nível"></canvas>
       </section>
 
       <section class="card">
@@ -52,7 +53,7 @@ export const DashboardView = {
         <div id="empty" style="display:none;padding:12px;color:#aaa">Sem clientes para exibir.</div>
       </section>
 
-      <div id="toast" style="position:fixed;right:16px;bottom:16px;display:none" class="toast"></div>
+      <div id="toast" style="position:fixed;right:16px;bottom:16px;display:none" class="toast" role="status" aria-live="polite"></div>
     `;
   },
 
@@ -101,7 +102,7 @@ export const DashboardView = {
       });
     };
 
-    // filtros
+    // filtros (com debounce na busca)
     const debounce = (fn, ms=200)=>{ let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), ms);} };
     $('#q').addEventListener('input', debounce(e => { Store.state.filters.q = e.target.value; renderTable(); }));
     $('#nivel').addEventListener('change', e => { Store.state.filters.nivel = e.target.value; renderTable(); });
@@ -202,11 +203,18 @@ function chartNiveis(){
     }]
   };
 
-  chartRef = new Chart(el, { type: 'bar', data, options: { responsive:true, scales: { y: { beginAtZero: true } } } });
+  // fallback se Chart não estiver disponível
+  try{
+    // eslint-disable-next-line no-undef
+    chartRef = new Chart(el, { type: 'bar', data, options: { responsive:true, scales: { y: { beginAtZero: true } } } });
+  }catch(e){
+    console.warn('Chart.js não carregado, pulando gráfico.', e);
+    el.insertAdjacentHTML('afterend', `<p style="color:#888;margin-top:8px">Gráfico indisponível (Chart.js não carregado).</p>`);
+  }
 }
 
 function escapeHTML(s){
-  return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+  return String(s == null ? '' : s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 }
 
 function toast(msg, error=false){
