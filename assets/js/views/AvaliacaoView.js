@@ -1,54 +1,112 @@
-// Regras de pontuação + classificação com critério de consistência p/ OverPrime
-export function pontuar(r){
-  let p=0;
+import { Store } from '../app.js';
+import { pontuar, classificar } from '../avaliacao.js';
 
-  // está treinando
-  p += r.estaTreinando ? 2 : -3;
+export const AvaliacaoView = {
+  async template(id){
+    const c = Store.byId(id);
+    if(!c) 
+      return `<div class="card"><p>Cliente não encontrado.</p><a class="btn btn-outline" href="#/">Voltar</a></div>`;
 
-  // frequência semanal
-  const f=Number(r.frequenciaSemanal||0);
-  if(f<=1) p+=-2;
-  else if(f===2) p+=0;
-  else if(f<=4) p+=1;
-  else if(f<=6) p+=2;
-  else p+=3; // 7x/semana
+    return `
+      <section class="card">
+        <a class="btn btn-outline" href="#/cliente/${c.id}">← Voltar ao perfil</a>
+        <h2 style="margin:8px 0 12px 0">Nova avaliação — ${c.nome}</h2>
 
-  // sono (1–5)
-  const sono=Number(r.sono||3);
-  if(sono<=2) p+=-2;
-  else if(sono===3) p+=0;
-  else if(sono===4) p+=1;
-  else p+=2;
+        <form id="form" class="row" autocomplete="off">
+          <div class="card">
+            <label><input type="checkbox" name="estaTreinando" /> Está treinando</label><br />
+            <label>Frequência semanal: 
+              <input class="input" type="number" name="frequenciaSemanal" min="0" max="7" value="3" />
+            </label><br />
+            <label>Qualidade do sono (1–5): 
+              <input class="input" type="number" name="sono" min="1" max="5" value="3" />
+            </label><br />
+            <label>Dor/lesão (0=nenhuma, 1=leve, 2=moderada, 3=limitante): 
+              <input class="input" type="number" name="dorLesao" min="0" max="3" value="0" />
+            </label><br />
+          </div>
 
-  // dor/lesão (0..3)
-  const dor=Number(r.dorLesao||0);
-  if(dor===2) p+=-1; else if(dor>=3) p+=-2;
+          <div class="card">
+            <label>Nível de estresse (1–5): 
+              <input class="input" type="number" name="estresse" min="1" max="5" value="3" />
+            </label><br />
+            <label>Comprometimento (1–10): 
+              <input class="input" type="number" name="comprometimento" min="1" max="10" value="6" />
+            </label><br />
+            <label>Plano alimentar: 
+              <select name="planoAlimentar">
+                <option value="nao">Não</option>
+                <option value="parcial">Em parte</option>
+                <option value="sim">Sim</option>
+              </select>
+            </label><br />
+            <label><input type="checkbox" name="acompanhamentoProfissional" /> Acompanhamento profissional</label><br />
+          </div>
+        </form>
 
-  // estresse (1–5)
-  const estresse=Number(r.estresse||3);
-  if(estresse>=4) p+=-2; else if(estresse===3) p+=-1; else if(estresse===2) p+=0; else p+=1;
+        <div class="card" id="resultado">
+          <h3 style="margin-top:0">Resultado</h3>
+          <p>Pontuação: <b id="pontuacao">0</b></p>
+          <p>Nível: <b id="nivel">-</b></p>
+          <button class="btn btn-primary" id="salvar">Salvar avaliação</button>
+        </div>
+      </section>
+    `;
+  },
 
-  // comprometimento (1–10)
-  const comp=Number(r.comprometimento||5);
-  if(comp<=3) p+=-2; else if(comp<=6) p+=0; else if(comp<=8) p+=1; else p+=2;
+  async init(id){
+    const c = Store.byId(id);
+    if(!c) return;
 
-  // plano alimentar
-  if(r.planoAlimentar==='sim') p+=2; else if(r.planoAlimentar==='parcial') p+=1;
+    const $ = (s) => document.querySelector(s);
+    const form = document.getElementById('form');
 
-  // acompanhamento
-  if(r.acompanhamentoProfissional) p+=1;
+    // Lê os valores do formulário
+    function readForm(){
+      const fd = new FormData(form);
+      return {
+        estaTreinando: form.estaTreinando.checked,
+        frequenciaSemanal: Number(fd.get('frequenciaSemanal')),
+        sono: Number(fd.get('sono')),
+        dorLesao: Number(fd.get('dorLesao')),
+        estresse: Number(fd.get('estresse')),
+        comprometimento: Number(fd.get('comprometimento')),
+        planoAlimentar: fd.get('planoAlimentar'),
+        acompanhamentoProfissional: form.acompanhamentoProfissional.checked
+      };
+    }
 
-  return p;
-}
+    // Calcula e exibe o resultado em tempo real
+    function renderResultado(){
+      const respostas = readForm();
+      const p = pontuar(respostas);
+      const n = classificar(p, c.avaliacoes || []);
+      document.getElementById('pontuacao').textContent = p;
+      document.getElementById('nivel').textContent = n;
+      return { p, n };
+    }
 
-export function classificar(p, historico=[]){
-  // tendência de evolução nas 3 últimas avaliações
-  const ult=[...historico].slice(-3).map(a=>a.pontuacao);
-  const tendenciaOk = ult.length===3 && (ult[2]>=ult[1] && ult[1]>=ult[0]);
+    form.addEventListener('input', renderResultado);
+    renderResultado();
 
-  if(p<=2)  return 'Fundação';
-  if(p<=6)  return 'Ascensão';
-  if(p<=10) return 'Domínio';
-  if(p>=11 && tendenciaOk) return 'OverPrime';
-  return 'Domínio';
-}
+    // Botão Salvar
+    document.getElementById('salvar').addEventListener('click', () => {
+      const { p, n } = renderResultado();
+      const d = new Date();
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const da = String(d.getDate()).padStart(2, '0');
+      const dataISO = `${y}-${m}-${da}`;
+
+      const novo = { data: dataISO, pontuacao: p, nivel: n };
+      c.avaliacoes = [...(c.avaliacoes || []), novo];
+      c.nivel = n;
+      c.pontuacao = p;
+      c.ultimoTreino = dataISO;
+      Store.upsert(c);
+
+      // Redireciona de volta pro perfil
+      location.hash = `#/cliente/${c.id}`;
+    });
+  }
+};
