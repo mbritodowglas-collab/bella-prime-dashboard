@@ -3,9 +3,9 @@
 // Sincroniza dados em tempo real via Google Sheets API
 // =====================================
 
-import { DashboardView } from './views/DashboardView.js';
-import { ClienteView } from './views/ClienteView.js';
-import { AvaliacaoView } from './views/AvaliacaoView.js';
+import { DashboardView } from './views/dashboardview.js';
+import { ClienteView }   from './views/clienteview.js';
+import { AvaliacaoView } from './views/avaliacaoview.js';
 
 // ======================
 // CONFIGURAÇÃO DA API
@@ -73,8 +73,8 @@ export const Store = {
   list() {
     const { q, nivel, status } = this.state.filters;
     return [...this.state.clientes]
-      .sort((a, b) => a.nome.localeCompare(b.nome, 'pt', { sensitivity: 'base' }))
-      .filter(c => !q || c.nome.toLowerCase().includes(q.toLowerCase()))
+      .sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt', { sensitivity: 'base' }))
+      .filter(c => !q || (c.nome || '').toLowerCase().includes(q.toLowerCase()))
       .filter(c => !nivel || c.nivel === nivel)
       .filter(c => !status || statusCalc(c).label === status);
   },
@@ -129,18 +129,20 @@ export function statusCalc(c) {
   const hoje = todayISO();
   const dias = renov - (diffDays(hoje, c.ultimoTreino));
   if (dias >= 10) return { label: 'Ativa', klass: 'st-ok' };
-  if (dias >= 3) return { label: 'Perto de vencer', klass: 'st-warn' };
-  if (dias >= 0) return { label: 'Vence em breve', klass: 'st-soon' };
+  if (dias >= 3)  return { label: 'Perto de vencer', klass: 'st-warn' };
+  if (dias >= 0)  return { label: 'Vence em breve', klass: 'st-soon' };
   return { label: 'Vencida', klass: 'st-bad' };
 }
 
 // ======================
 // ROTAS (SPA)
 // ======================
+// aceita ids com letras, números, _, -, +, ., @ (ex.: whatsapp puro ou email codificado)
+const idRe = '([\\w\\-+.@=]+)';
 const routes = [
-  { path: /^#\/$/, view: DashboardView },
-  { path: /^#\/cliente\/(\w+)$/, view: ClienteView },
-  { path: /^#\/avaliacao\/(\w+)$/, view: AvaliacaoView },
+  { path: new RegExp('^#\\/$'),             view: DashboardView },
+  { path: new RegExp('^#\\/cliente\\/' + idRe + '$'),   view: ClienteView },
+  { path: new RegExp('^#\\/avaliacao\\/' + idRe + '$'), view: AvaliacaoView },
 ];
 
 async function render() {
@@ -151,8 +153,12 @@ async function render() {
   const params = match.path.exec(hash).slice(1);
   const View = match.view;
   app.innerHTML = await View.template(...params);
-  await View.init(...params);
-  if (hash === "#/") { requestAnimationFrame(() => window.scrollTo(0, Store.state.scroll['/'] || 0)); }
+  if (View.init) {
+    try { await View.init(...params); } catch (e) { console.error('init view error', e); }
+  }
+  if (hash === '#/') {
+    requestAnimationFrame(() => window.scrollTo(0, Store.state.scroll['/'] || 0));
+  }
 }
 
 window.addEventListener('hashchange', async () => {
