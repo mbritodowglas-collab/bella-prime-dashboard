@@ -70,3 +70,37 @@ body{
 .kpi h4{margin:0 0 6px 0;color:var(--muted);font-weight:600}
 .kpi .num{font-size:1.6rem;font-weight:800}
 .chart-card{padding:16px}
+
+/* ——— ELEVAÇÃO E ACABAMENTO ——— */
+.card{border-radius:16px;border:1px solid #1e1e1e;background:linear-gradient(180deg,#141414 0%,#101010 100%);
+  box-shadow:0 2px 12px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.02)}
+.kpi{background:linear-gradient(180deg,#151515 0%,#111 100%);}
+
+/* ——— TIPOGRAFIA + RESPIRO ——— */
+:root{--space:16px}
+.bp-container{padding:24px}
+h1,h2,h3{letter-spacing:.2px}
+.kpi .num{font-size:1.8rem}
+.table th,.table td{padding:14px 12px}
+
+/* ——— BARRA DE CONTROLES ——— */
+.controls{gap:10px;padding:10px;border-radius:12px;border:1px solid #1e1e1e}
+.input,select,button{border-radius:12px}
+.btn-primary{background:linear-gradient(90deg,#b71c1c,#8f1515);border-color:#7d1111}
+
+/* ——— PILLS DE NÍVEL / STATUS ——— */
+.badge{font-weight:600;letter-spacing:.2px}
+.level-ascensao{background:rgba(183,28,28,.12);border-color:#742020}
+.level-dominio{background:rgba(212,175,55,.10);border-color:#6e5b1e}
+.level-overprime{background:rgba(212,175,55,.18);border-color:#a5851f}
+
+/* ——— TABELA MAIS CORPORATE ——— */
+.table thead th{background:#121212;position:sticky;top:0;z-index:1}
+.table tbody tr:hover{background:#161616}
+.table tbody tr:nth-child(even){background:#121212}
+
+/* ——— MICROINTERAÇÕES ——— */
+.btn,.input,select{transition:.2s ease}
+.btn:hover{transform:translateY(-1px)}
+.card{transition:box-shadow .2s ease}
+.card:hover{box-shadow:0 6px 24px rgba(0,0,0,.45)}
