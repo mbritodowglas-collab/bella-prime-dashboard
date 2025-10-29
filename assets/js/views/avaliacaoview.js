@@ -1,6 +1,5 @@
-// Avaliação (simular/registrar local + link opcional para reavaliação oficial)
 import { Store } from '../app.js';
-import { pontuar, classificar } from '../avaliacao.js'; // <-- AJUSTE AQUI
+import { pontuar, classificar } from './avaliacao.js';
 
 export const AvaliacaoView = {
   async template(id){
@@ -15,57 +14,45 @@ export const AvaliacaoView = {
         <h2>Nova Avaliação — ${escapeHTML(c.nome || '')}</h2>
         <p style="margin:8px 0 16px">
           Registre abaixo para atualizar o painel.<br>
-          <small>Para enviar para a planilha oficial, use <b>“Abrir Reavaliação (Google)”</b>.</small>
+          <small>Para enviar também à planilha oficial, use <b>“Abrir Reavaliação (Google)”</b>.</small>
         </p>
 
         <div class="grid-2">
-          <label class="field">
-            <span>Está treinando?</span>
+          <label class="field"><span>Está treinando?</span>
             <select id="estaTreinando" class="input">
-              <option value="true">Sim</option>
-              <option value="false">Não</option>
+              <option value="true">Sim</option><option value="false">Não</option>
             </select>
           </label>
 
-          <label class="field">
-            <span>Frequência semanal</span>
+          <label class="field"><span>Frequência semanal</span>
             <input id="frequenciaSemanal" class="input" type="number" min="0" max="14" placeholder="ex.: 3" />
           </label>
 
-          <label class="field">
-            <span>Qualidade do sono (1–5)</span>
+          <label class="field"><span>Qualidade do sono (1–5)</span>
             <input id="sono" class="input" type="number" min="1" max="5" placeholder="3" />
           </label>
 
-          <label class="field">
-            <span>Dor/lesão (0=sem / 1=com)</span>
+          <label class="field"><span>Dor/lesão (0=sem / 1=com)</span>
             <input id="dorLesao" class="input" type="number" min="0" max="3" placeholder="0" />
           </label>
 
-          <label class="field">
-            <span>Estresse (1–5)</span>
+          <label class="field"><span>Estresse (1–5)</span>
             <input id="estresse" class="input" type="number" min="1" max="5" placeholder="3" />
           </label>
 
-          <label class="field">
-            <span>Comprometimento (1–10)</span>
+          <label class="field"><span>Comprometimento (1–10)</span>
             <input id="comprometimento" class="input" type="number" min="1" max="10" placeholder="7" />
           </label>
 
-          <label class="field">
-            <span>Segue plano alimentar?</span>
+          <label class="field"><span>Segue plano alimentar?</span>
             <select id="planoAlimentar" class="input">
-              <option value="nao">Não</option>
-              <option value="parcial">Parcial</option>
-              <option value="sim">Sim</option>
+              <option value="nao">Não</option><option value="parcial">Parcial</option><option value="sim">Sim</option>
             </select>
           </label>
 
-          <label class="field">
-            <span>Acompanhamento profissional?</span>
+          <label class="field"><span>Acompanhamento profissional?</span>
             <select id="acompanhamentoProfissional" class="input">
-              <option value="false">Não</option>
-              <option value="true">Sim</option>
+              <option value="false">Não</option><option value="true">Sim</option>
             </select>
           </label>
         </div>
@@ -85,7 +72,7 @@ export const AvaliacaoView = {
     const c = Store.byId(id);
     if (!c) return;
 
-    const $ = (s) => document.querySelector(s);
+    const $ = s => document.querySelector(s);
     const $res  = $('#resultado');
     const $save = $('#save');
 
@@ -98,7 +85,7 @@ export const AvaliacaoView = {
       dorLesao: clamp($('#dorLesao').value, 0, 3),
       estresse: clamp($('#estresse').value, 1, 5),
       comprometimento: clamp($('#comprometimento').value, 1, 10),
-      planoAlimentar: $('#planoAlimentar').value, // 'nao' | 'parcial' | 'sim'
+      planoAlimentar: $('#planoAlimentar').value,
       acompanhamentoProfissional: $('#acompanhamentoProfissional').value === 'true',
     });
 
@@ -112,7 +99,7 @@ export const AvaliacaoView = {
         <h3>Resultado</h3>
         <p><b>Pontuação:</b> ${p}</p>
         <p><b>Nível:</b> ${n}</p>
-        <small>Obs.: esta avaliação salva apenas no <b>painel</b>. Para registrar na planilha oficial, use “Abrir Reavaliação (Google)”.</small>
+        <small>Obs.: este registro salva no <b>painel</b>. Para lançar na planilha, use o botão do Google.</small>
       `;
       $save.disabled = false;
       $save.dataset.p = String(p);
@@ -136,17 +123,15 @@ export const AvaliacaoView = {
   }
 };
 
-// === helpers ===
 function todayISO(){
-  const d = new Date();
-  const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), da = String(d.getDate()).padStart(2,'0');
+  const d=new Date(), y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), da=String(d.getDate()).padStart(2,'0');
   return `${y}-${m}-${da}`;
 }
 function escapeHTML(s){
   return String(s||'').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 }
 function prefillFormURL(c){
-  // Preenchimento do Google Forms (opcional):
-  // Ex.: return `https://docs.google.com/forms/d/e/FORM_ID/viewform?entry.123456=${encodeURIComponent(c.contato||c.email||'')}`;
-  return ''; // deixe vazio até mapear o entry do seu formulário
+  // Exemplo se quiser preencher o WhatsApp/email:
+  // return `https://docs.google.com/forms/d/e/FORM_ID/viewform?entry.123456=${encodeURIComponent(c.contato||c.email||'')}`;
+  return '';
 }
