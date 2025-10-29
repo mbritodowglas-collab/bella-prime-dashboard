@@ -6,7 +6,7 @@ import { DashboardView } from './views/dashboardview.js';
 import { ClienteView }   from './views/clienteview.js';
 import { AvaliacaoView } from './views/avaliacaoview.js';
 
-const SHEETS_API = 'https://script.google.com/macros/s/AKfycbwsOtURP_fuMDzfxysaeVITPZkl2GfRXfz7io9plgAFsgbpScIZGzVTHaRfWPepZv26/exec';
+const SHEETS_API = 'https://script.google.com/macros/s/AKfycbyAafbpJDWr4RF9hdTkzmnLLv1Ge258hk6jlnDo7ng2kk88GoWyJzp63rHZPMDJA-wy/exec';
 
 // ---------- Datas ----------
 const todayISO = () => {
