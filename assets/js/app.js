@@ -2,7 +2,7 @@
 // BELLA PRIME · APP PRINCIPAL (robusto + simples)
 // =====================================
 
-// imports (atenção ao case dos nomes dos arquivos)
+// imports (atenção a minúsculas)
 import { DashboardView } from './views/dashboardview.js';
 import { ClienteView }   from './views/clienteview.js';
 import { AvaliacaoView } from './views/avaliacaoview.js';
@@ -37,7 +37,11 @@ async function loadSeed(){
 const KEY = 'bp_clientes_v1';
 
 export const Store = {
-  state: { clientes: [], filters:{ q:'', nivel:'', status:'' }, scroll:{ '/':0 } },
+  state: { 
+    clientes: [], 
+    filters:{ q:'', nivel:'', status:'' }, 
+    scroll:{ '/':0 } 
+  },
 
   async init(){
     try{
@@ -47,7 +51,7 @@ export const Store = {
       const norm = (dados || []).map(raw => {
         const c = { ...raw };
 
-        // 1) Cidade - Estado -> cidade
+        // 1) "Cidade - Estado" -> campo único "cidade"
         if (!c.cidade && c['Cidade - Estado']) {
           c.cidade = c['Cidade - Estado'];
           delete c['Cidade - Estado'];
@@ -75,7 +79,7 @@ export const Store = {
   persist(){ localStorage.setItem(KEY, JSON.stringify(this.state.clientes)); },
 
   list(){
-    const { q, nivel, status } = this.state.filters;
+    const { q, nivel, status } = this.state.filters || { q:'', nivel:'', status:'' };
     return [...this.state.clientes]
       .sort((a,b)=> (a.nome||'').localeCompare(b.nome||'','pt',{sensitivity:'base'}))
       .filter(c => !q || (c.nome||'').toLowerCase().includes(q.toLowerCase()))
@@ -89,12 +93,46 @@ export const Store = {
     const i = this.state.clientes.findIndex(x => String(x.id) === String(c.id));
     if (i >= 0) this.state.clientes[i] = c; else this.state.clientes.push(c);
     this.persist();
+  },
+
+  // — export/import usados pelo dashboard —
+  exportJSON(){
+    const blob = new Blob([JSON.stringify(this.state.clientes, null, 2)], { type:'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `clientes-${todayISO()}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  },
+
+  async importJSON(file){
+    const text = await file.text();
+    const incoming = JSON.parse(text);
+    const map = new Map(this.state.clientes.map(c => [String(c.id), c]));
+    for (const nc of incoming){
+      const id = String(nc.id);
+      if (map.has(id)){
+        const base = map.get(id);
+        const avs  = [...(base.avaliacoes||[]), ...(nc.avaliacoes||[])];
+        const seen = new Set(); const dedup = [];
+        for (const a of avs){
+          const key = `${a.data}|${a.pontuacao}`;
+          if (!seen.has(key)){ seen.add(key); dedup.push(a); }
+        }
+        map.set(id, { ...base, ...nc, avaliacoes: dedup.sort((a,b)=> a.data.localeCompare(b.data)) });
+      } else {
+        map.set(id, nc);
+      }
+    }
+    this.state.clientes = [...map.values()];
+    this.persist();
   }
 };
 
 // util para criar id quando faltar tudo
 function cryptoRandom(){
-  try { return crypto.randomUUID(); } catch { return 'id_' + Math.random().toString(36).slice(2,9); }
+  try { return crypto.randomUUID(); } 
+  catch { return 'id_' + Math.random().toString(36).slice(2,9); }
 }
 
 // === STATUS (vence/ativa) ===
