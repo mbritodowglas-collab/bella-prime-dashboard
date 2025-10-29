@@ -5,15 +5,7 @@ let chartRef = null;
 export const DashboardView = {
   async template(){
     const k = kpi(Store.state.clientes);
-    const emptyWarn = (k.total === 0)
-      ? `<div class="card" style="border:1px dashed #d4af37;color:#d4af37">
-           Nenhum cliente carregado. Toque em <b>Atualizar (Google)</b> ou <b>Importar</b>.
-         </div>`
-      : '';
-
     return `
-      ${emptyWarn}
-
       <section class="row">
         <div class="kpi"><h4>Total</h4><div class="num">${k.total}</div></div>
         <div class="kpi"><h4>Fundação</h4><div class="num">${k.fundacao}</div></div>
@@ -36,7 +28,11 @@ export const DashboardView = {
         <button class="btn btn-outline" id="syncBtn">Atualizar (Google)</button>
         <button class="btn btn-outline" id="importBtn">Importar</button>
         <input type="file" id="file" style="display:none" accept="application/json" />
-        <button class="btn btn-primary" id="exportBtn">Exportar</button>
+        <button class="btn btn-primary" id="exportBtn">Exportar JSON</button>
+
+        <!-- Novos controles para exportar/copiar todas as respostas -->
+        <button class="btn btn-ghost" id="copyCsvBtn" title="Gerar CSV e copiar">Copiar CSV</button>
+        <button class="btn btn-ghost" id="copyJsonLinesBtn" title="Gerar JSON Lines e copiar">Copiar JSONL</button>
       </section>
 
       <section class="card chart-card">
@@ -64,15 +60,14 @@ export const DashboardView = {
   async init(){
     const $ = s => document.querySelector(s);
 
-    // garante objeto de filtros
-    Store.state.filters = Store.state.filters || { q:'', nivel:'', status:'' };
-    $('#q').value      = Store.state.filters.q || '';
-    $('#nivel').value  = Store.state.filters.nivel || '';
+    // filtros – estado inicial
+    $('#q').value = Store.state.filters.q || '';
+    $('#nivel').value = Store.state.filters.nivel || '';
     $('#status').value = Store.state.filters.status || '';
 
     const renderTable = () => {
-      const list  = Store.list();
-      const body  = document.getElementById('tbody');
+      const list = Store.list();
+      const body = document.getElementById('tbody');
       const empty = document.getElementById('empty');
 
       if(list.length === 0){
@@ -132,6 +127,19 @@ export const DashboardView = {
       } finally {
         btn.disabled = false; btn.textContent = old;
       }
+    });
+
+    // --- Novas ações: copiar CSV / JSONL ---
+    $('#copyCsvBtn').addEventListener('click', async ()=>{
+      const csv = formatCSV(Store.state.clientes);
+      await copyToClipboard(csv);
+      toast('CSV copiado para o clipboard.');
+    });
+
+    $('#copyJsonLinesBtn').addEventListener('click', async ()=>{
+      const jl = formatJSONLines(Store.state.clientes);
+      await copyToClipboard(jl);
+      toast('JSON Lines copiado para o clipboard.');
     });
 
     chartNiveis();
@@ -198,8 +206,66 @@ function chartNiveis(){
   });
 }
 
+// ---------- utilidades de exportação / clipboard ----------
+function safeCell(v){
+  if (v === null || v === undefined) return '';
+  return String(v).replace(/\r?\n/g,' ').replace(/"/g,'""');
+}
+
+function formatCSV(arr){
+  if(!Array.isArray(arr)) return '';
+  // campos comuns (ordenados) — ajuste se quiser outros campos
+  const fields = ['id','nome','contato','email','cidade','nivel','pontuacao','ultimoTreino','objetivo'];
+  const header = fields.join(',');
+  const rows = arr.map(o => fields.map(f => `"${safeCell(o[f])}"`).join(','));
+  return [header, ...rows].join('\n');
+}
+
+function formatJSONLines(arr){
+  if(!Array.isArray(arr)) return '';
+  return arr.map(o => JSON.stringify(o)).join('\n');
+}
+
+async function copyToClipboard(text){
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch(e){
+    // fallback: criar textarea temporário
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch(e2) { console.warn('copy fallback failed', e2); }
+    document.body.removeChild(ta);
+    return false;
+  }
+}
+
 function escapeHTML(s){
-  return String(s ?? '').replace(/[&<>"']/g, m => (
-    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]
-  ));
+  return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+}
+
+// ---------- toast simples (reaproveitado) ----------
+let toastT = null;
+function toast(msg, error=false){
+  let el = document.getElementById('toast');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'toast';
+    el.className = 'toast';
+    el.style.position = 'fixed';
+    el.style.right = '16px';
+    el.style.bottom = '16px';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.style.display = 'block';
+  el.style.background = error ? 'rgba(183,28,28,.95)' : 'rgba(212,175,55,.95)';
+  el.style.color = '#0b0b0b';
+  el.style.padding = '10px 14px';
+  el.style.borderRadius = '10px';
+  el.style.fontWeight = '600';
+  clearTimeout(toastT);
+  toastT = setTimeout(()=> el.style.display = 'none', 2600);
 }
