@@ -56,14 +56,15 @@ export const DashboardView = {
   async init(){
     const $ = s => document.querySelector(s);
 
-    // filtros – estado inicial
-    $('#q').value = Store.state.filters.q || '';
-    $('#nivel').value = Store.state.filters.nivel || '';
+    // filtros – garante objeto existente
+    Store.state.filters = Store.state.filters || { q:'', nivel:'', status:'' };
+    $('#q').value      = Store.state.filters.q || '';
+    $('#nivel').value  = Store.state.filters.nivel || '';
     $('#status').value = Store.state.filters.status || '';
 
     const renderTable = () => {
-      const list = Store.list();
-      const body = document.getElementById('tbody');
+      const list  = Store.list();
+      const body  = document.getElementById('tbody');
       const empty = document.getElementById('empty');
 
       if(list.length === 0){
@@ -190,5 +191,7 @@ function chartNiveis(){
 }
 
 function escapeHTML(s){
-  return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+  return String(s ?? '').replace(/[&<>"']/g, m => (
+    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]
+  ));
 }
