@@ -6,7 +6,7 @@
   <title>Bella Prime · Dashboard</title>
 
   <!-- === Estilo principal === -->
-  <link rel="stylesheet" href="./assets/css/style.css?v=13" />
+  <link rel="stylesheet" href="./assets/css/style.css?v=15" />
 
   <!-- === Tipografia === -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -16,14 +16,30 @@
     rel="stylesheet"
   />
 
-  <!-- === Chart.js === -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- === Chart.js (com fallback) === -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js" defer></script>
+  <script>
+    window.addEventListener('error', e => {
+      if (e.message && e.message.includes('chart')) {
+        console.warn('⚠️ Falha ao carregar Chart.js, tentando fallback...');
+        const alt = document.createElement('script');
+        alt.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.1';
+        document.head.appendChild(alt);
+      }
+    });
+  </script>
 
   <!-- === Favicon opcional === -->
   <link rel="icon" href="./assets/img/favicon-32.png" />
 </head>
 
 <body>
+  <noscript>
+    <div style="background:#200;color:#f88;padding:10px;text-align:center">
+      ⚠️ Ative o JavaScript para usar o painel Bella Prime.
+    </div>
+  </noscript>
+
   <header class="bp-header">
     <div class="bp-container">
       <h1 class="bp-logo">Bella Prime <span>Dashboard</span></h1>
@@ -58,7 +74,7 @@
     );
   </script>
 
-  <!-- === App principal === -->
-  <script type="module" src="./assets/js/app.js?v=13"></script>
+  <!-- === App principal (com cache-bust forçado) === -->
+  <script type="module" src="./assets/js/app.js?v=15"></script>
 </body>
 </html>
