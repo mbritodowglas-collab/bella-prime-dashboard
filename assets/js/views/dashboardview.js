@@ -1,8 +1,6 @@
-// Dashboard (lista + filtros + KPIs + gráfico)
 import { Store, statusCalc } from '../app.js';
 
-let chartRef = null; // evita gráficos duplicados
-let toastT = null;   // controla sumiço do toast
+let chartRef = null;
 
 export const DashboardView = {
   async template(){
@@ -27,14 +25,14 @@ export const DashboardView = {
           <option>Ativa</option><option>Perto de vencer</option><option>Vence em breve</option><option>Vencida</option>
         </select>
         <span style="flex:1"></span>
-        <button class="btn btn-outline" id="syncBtn" title="Ler dados da planilha Google">Atualizar (Google)</button>
-        <button class="btn btn-outline" id="importBtn" title="Importar JSON">Importar</button>
+        <button class="btn btn-outline" id="syncBtn">Atualizar (Google)</button>
+        <button class="btn btn-outline" id="importBtn">Importar</button>
         <input type="file" id="file" style="display:none" accept="application/json" />
-        <button class="btn btn-primary" id="exportBtn" title="Exportar JSON">Exportar</button>
+        <button class="btn btn-primary" id="exportBtn">Exportar</button>
       </section>
 
       <section class="card chart-card">
-        <canvas id="chartNiveis" height="120" aria-label="Distribuição por nível"></canvas>
+        <canvas id="chartNiveis" height="140"></canvas>
       </section>
 
       <section class="card">
@@ -52,15 +50,13 @@ export const DashboardView = {
         </table>
         <div id="empty" style="display:none;padding:12px;color:#aaa">Sem clientes para exibir.</div>
       </section>
-
-      <div id="toast" style="position:fixed;right:16px;bottom:16px;display:none" class="toast" role="status" aria-live="polite"></div>
     `;
   },
 
   async init(){
-    const $ = (s) => document.querySelector(s);
+    const $ = s => document.querySelector(s);
 
-    // estados iniciais dos filtros
+    // filtros – estado inicial
     $('#q').value = Store.state.filters.q || '';
     $('#nivel').value = Store.state.filters.nivel || '';
     $('#status').value = Store.state.filters.status || '';
@@ -78,37 +74,32 @@ export const DashboardView = {
         body.innerHTML = list.map(rowHTML).join('');
       }
 
-      // ver perfil
       body.querySelectorAll('a[data-id]').forEach(a => {
-        a.addEventListener('click', (e) => {
+        a.addEventListener('click', e => {
           e.preventDefault();
           location.hash = `#/cliente/${a.dataset.id}`;
         });
       });
 
-      // excluir cliente
       body.querySelectorAll('.btn-del').forEach(btn => {
-        btn.addEventListener('click', (e) => {
+        btn.addEventListener('click', e => {
           const id = e.currentTarget.dataset.id;
           const nome = e.currentTarget.dataset.nome;
           if (confirm(`Deseja realmente excluir ${nome}?`)) {
             Store.state.clientes = Store.state.clientes.filter(c => String(c.id) !== String(id));
             Store.persist();
-            chartNiveis(); // atualiza gráfico
+            chartNiveis();
             renderTable();
-            toast('Cliente removida.');
           }
         });
       });
     };
 
-    // filtros (com debounce na busca)
-    const debounce = (fn, ms=200)=>{ let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), ms);} };
+    const debounce = (fn, ms=200)=>{ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms);} };
     $('#q').addEventListener('input', debounce(e => { Store.state.filters.q = e.target.value; renderTable(); }));
     $('#nivel').addEventListener('change', e => { Store.state.filters.nivel = e.target.value; renderTable(); });
     $('#status').addEventListener('change', e => { Store.state.filters.status = e.target.value; renderTable(); });
 
-    // importar/exportar
     document.getElementById('exportBtn').addEventListener('click', () => Store.exportJSON());
     document.getElementById('importBtn').addEventListener('click', () => document.getElementById('file').click());
     document.getElementById('file').addEventListener('change', async (e) => {
@@ -116,26 +107,19 @@ export const DashboardView = {
       await Store.importJSON(f);
       chartNiveis();
       renderTable();
-      e.target.value = ''; // limpa input
-      toast('Importação concluída.');
+      e.target.value = '';
     });
 
-    // sincronizar com Google Sheets
     document.getElementById('syncBtn').addEventListener('click', async ()=>{
       const btn = document.getElementById('syncBtn');
       const old = btn.textContent;
       btn.disabled = true; btn.textContent = 'Atualizando...';
       try{
         await Store.reloadFromSheets();
-        // limpa filtros ao sincronizar (opcional)
         Store.state.filters = { q:'', nivel:'', status:'' };
         $('#q').value=''; $('#nivel').value=''; $('#status').value='';
         chartNiveis();
         renderTable();
-        toast('Sincronizado com a planilha.');
-      } catch (err){
-        console.error(err);
-        toast('Falha ao sincronizar', true);
       } finally {
         btn.disabled = false; btn.textContent = old;
       }
@@ -146,13 +130,12 @@ export const DashboardView = {
   }
 };
 
-// ===== helpers =====
 function rowHTML(c){
   const status = statusCalc(c);
   const klass = {
     'Fundação': 'level-fundacao',
     'Ascensão': 'level-ascensao',
-    'Domínio': 'level-dominio',
+    'Domínio':   'level-dominio',
     'OverPrime': 'level-overprime'
   }[c.nivel] || 'level-fundacao';
 
@@ -176,58 +159,36 @@ function kpi(arr){
     total,
     fundacao: by['Fundação'] || 0,
     ascensao: by['Ascensão'] || 0,
-    dominio: by['Domínio'] || 0,
-    over: by['OverPrime'] || 0
+    dominio:  by['Domínio']   || 0,
+    over:     by['OverPrime'] || 0
   };
 }
 
 function chartNiveis(){
   const el = document.getElementById('chartNiveis');
   if (!el) return;
-
-  // destrói gráfico anterior, se existir
-  if(chartRef){ chartRef.destroy(); chartRef = null; }
+  if (chartRef) chartRef.destroy();
 
   const arr = Store.state.clientes;
-  const data = {
-    labels: ['Fundação', 'Ascensão', 'Domínio', 'OverPrime'],
-    datasets: [{
-      label: 'Distribuição por Nível',
-      data: [
-        arr.filter(c => c.nivel === 'Fundação').length,
-        arr.filter(c => c.nivel === 'Ascensão').length,
-        arr.filter(c => c.nivel === 'Domínio').length,
-        arr.filter(c => c.nivel === 'OverPrime').length,
-      ],
-      borderWidth: 1
-    }]
-  };
-
-  // fallback se Chart não estiver disponível
-  try{
-    // eslint-disable-next-line no-undef
-    chartRef = new Chart(el, { type: 'bar', data, options: { responsive:true, scales: { y: { beginAtZero: true } } } });
-  }catch(e){
-    console.warn('Chart.js não carregado, pulando gráfico.', e);
-    el.insertAdjacentHTML('afterend', `<p style="color:#888;margin-top:8px">Gráfico indisponível (Chart.js não carregado).</p>`);
-  }
+  chartRef = new Chart(el, {
+    type: 'bar',
+    data: {
+      labels: ['Fundação', 'Ascensão', 'Domínio', 'OverPrime'],
+      datasets: [{
+        label: 'Distribuição por Nível',
+        data: [
+          arr.filter(c => c.nivel === 'Fundação').length,
+          arr.filter(c => c.nivel === 'Ascensão').length,
+          arr.filter(c => c.nivel === 'Domínio').length,
+          arr.filter(c => c.nivel === 'OverPrime').length,
+        ],
+        borderWidth: 1
+      }]
+    },
+    options: { responsive:true, scales:{ y:{ beginAtZero:true } } }
+  });
 }
 
 function escapeHTML(s){
-  return String(s == null ? '' : s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
-}
-
-function toast(msg, error=false){
-  const el = document.getElementById('toast');
-  if(!el) return;
-  el.textContent = msg;
-  el.style.display = 'block';
-  el.style.background = error ? 'rgba(183,28,28,.95)' : 'rgba(212,175,55,.95)'; // vermelho/dourado
-  el.style.color = '#0b0b0b';
-  el.style.padding = '10px 14px';
-  el.style.borderRadius = '10px';
-  el.style.fontWeight = '600';
-  el.style.boxShadow = '0 6px 18px rgba(0,0,0,.35)';
-  clearTimeout(toastT);
-  toastT = setTimeout(()=> el.style.display = 'none', 2600);
+  return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 }
