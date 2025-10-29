@@ -17,14 +17,27 @@ export const ClienteView = {
         </tr>
       `).join('');
 
-    // ----- monta pares pergunta → resposta com TUDO que veio do Sheets -----
-    const { pares, linhasTexto, jsonStr } = buildAnswerBlocks(c);
-
-    const respostasHTML = pares.length
-      ? `<dl class="kv">${pares.map(([k,v])=>(
-          `<div class="kv-row"><dt>${escapeHTML(k)}</dt><dd>${escapeHTML(v)}</dd></div>`
-        )).join('')}</dl>`
-      : '<p style="color:#aaa">Sem respostas adicionais encontradas.</p>';
+    // Bloco de respostas completas (só se existir e tiver algo)
+    let blocoRespostas = '';
+    if (c._answers && Object.keys(c._answers).length > 0) {
+      const lista = Object.entries(c._answers)
+        .map(([k,v]) => `<li><b>${escapeHTML(k)}:</b> ${escapeHTML(v)}</li>`)
+        .join('');
+      const texto = Object.entries(c._answers)
+        .map(([k,v]) => `${k}: ${v}`)
+        .join('\n');
+      blocoRespostas = `
+        <section class="card">
+          <h3>Respostas completas (Sheets)</h3>
+          <ul style="margin:8px 0 12px 18px;">${lista}</ul>
+          <div class="row" style="gap:10px;">
+            <button class="btn btn-outline" id="copyAnswers">Copiar lista</button>
+            <small style="opacity:.8">Copia todas as respostas para análise no ChatGPT</small>
+          </div>
+          <textarea id="answersText" style="position:absolute;left:-9999px;top:-9999px;">${escapePlain(texto)}</textarea>
+        </section>
+      `;
+    }
 
     return `
       <section class="card">
@@ -34,19 +47,12 @@ export const ClienteView = {
         <p><b>Última pontuação:</b> ${c.pontuacao ?? '-'}</p>
         <p><b>Última avaliação:</b> ${c.ultimoTreino ?? '-'}</p>
         ${c.objetivo ? `<p><b>Objetivo:</b> ${escapeHTML(c.objetivo)}</p>` : ''}
-        ${c.email ? `<p><b>E-mail:</b> ${escapeHTML(c.email)}</p>` : ''}
+        ${c.cidade  ? `<p><b>Cidade/Estado:</b> ${escapeHTML(c.cidade)}</p>` : ''}
+        ${c.email   ? `<p><b>E-mail:</b> ${escapeHTML(c.email)}</p>` : ''}
         ${c.contato ? `<p><b>WhatsApp:</b> ${escapeHTML(c.contato)}</p>` : ''}
-        ${c.cidade ? `<p><b>Cidade/Estado:</b> ${escapeHTML(c.cidade)}</p>` : ''}
       </section>
 
-      <section class="card">
-        <h3>Respostas da Avaliação (todas as colunas do Sheets)</h3>
-        <div class="row" style="gap:10px;margin:8px 0 14px">
-          <button class="btn btn-outline" id="copyListaBtn">Copiar lista</button>
-          <button class="btn btn-outline" id="copyJsonBtn">Copiar JSON</button>
-        </div>
-        ${respostasHTML}
-      </section>
+      ${blocoRespostas}
 
       <section class="card">
         <h3>Histórico de Avaliações</h3>
@@ -64,16 +70,24 @@ export const ClienteView = {
       <section class="card">
         <button class="btn btn-primary" id="novaAvaliacaoBtn">+ Nova Avaliação</button>
       </section>
-
-      <!-- dados pré-formatados para os botões de copiar -->
-      <textarea id="__copy_lista__" style="position:absolute;left:-9999px;top:-9999px">${linhasTexto}</textarea>
-      <textarea id="__copy_json__"  style="position:absolute;left:-9999px;top:-9999px">${jsonStr}</textarea>
     `;
   },
 
   async init(id){
     const c = Store.byId(id);
     if (!c) return;
+
+    // botão copiar (só se existir)
+    const copyBtn = document.getElementById('copyAnswers');
+    if (copyBtn){
+      copyBtn.addEventListener('click', () => {
+        const ta = document.getElementById('answersText');
+        ta.select();
+        document.execCommand('copy');
+        copyBtn.textContent = 'Copiado!';
+        setTimeout(()=> copyBtn.textContent = 'Copiar lista', 1200);
+      });
+    }
 
     // gráfico
     const ctx = document.getElementById('chartEvolucao');
@@ -105,53 +119,14 @@ export const ClienteView = {
       }
     });
 
-    // copiar lista / JSON
-    const copy = (id) => {
-      const ta = document.getElementById(id);
-      ta.select(); ta.setSelectionRange(0, ta.value.length);
-      document.execCommand('copy');
-    };
-    const btnL = document.getElementById('copyListaBtn');
-    const btnJ = document.getElementById('copyJsonBtn');
-    if (btnL) btnL.addEventListener('click', ()=> copy('__copy_lista__'));
-    if (btnJ) btnJ.addEventListener('click', ()=> copy('__copy_json__'));
-
-    // nova avaliação
     const btn = document.getElementById('novaAvaliacaoBtn');
     if (btn) btn.addEventListener('click', () => { location.hash = `#/avaliacao/${id}`; });
   }
 };
 
-// ================= helpers =================
-
-function buildAnswerBlocks(c){
-  // Campos “internos” que não queremos repetir na lista longa
-  const internos = new Set([
-    'id','nome','contato','email','cidade','nivel','pontuacao','ultimoTreino',
-    'objetivo','avaliacoes','renovacaoDias'
-  ]);
-
-  const pares = [];
-  for (const [k, v] of Object.entries(c)){
-    if (internos.has(k)) continue;
-    if (v === '' || v === null || v === undefined) continue;
-    // arrays/objetos diferentes de string/number/boolean viram JSON compacto
-    const isPrim = (x) => ['string','number','boolean'].includes(typeof x);
-    const val = isPrim(v) ? v : JSON.stringify(v);
-    pares.push([k, String(val)]);
-  }
-
-  // também mostrar os principais, lá no topo já saem, mas incluímos aqui se desejar
-  // (deixe comentado; a seção superior já mostra)
-  // pares.unshift(['nome', c.nome||'']);
-
-  const linhasTexto = pares.map(([k,v])=> `${k}: ${v}`).join('\n');
-  const jsonStr     = JSON.stringify(c, null, 2);
-
-  return { pares, linhasTexto, jsonStr };
-}
-
+// helpers
 function escapeHTML(s){
   return String(s || '').replace(/[&<>"']/g, m =>
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 }
+function escapePlain(s){ return String(s || '').replace(/\r?\n/g, '\n'); }
