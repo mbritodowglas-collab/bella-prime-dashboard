@@ -17,7 +17,6 @@ export const ClienteView = {
         </tr>
       `).join('');
 
-    // Bloco de respostas completas (só se existir e tiver algo)
     let blocoRespostas = '';
     if (c._answers && Object.keys(c._answers).length > 0) {
       const lista = Object.entries(c._answers)
@@ -77,7 +76,6 @@ export const ClienteView = {
     const c = Store.byId(id);
     if (!c) return;
 
-    // botão copiar (só se existir)
     const copyBtn = document.getElementById('copyAnswers');
     if (copyBtn){
       copyBtn.addEventListener('click', () => {
@@ -89,7 +87,6 @@ export const ClienteView = {
       });
     }
 
-    // gráfico
     const ctx = document.getElementById('chartEvolucao');
     if (chartRef) chartRef.destroy();
 
