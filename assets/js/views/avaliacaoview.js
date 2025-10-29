@@ -1,6 +1,6 @@
 // Avaliação (simular/registrar local + link opcional para reavaliação oficial)
 import { Store } from '../app.js';
-import { pontuar, classificar } from './avaliacao.js';
+import { pontuar, classificar } from '../avaliacao.js'; // <-- AJUSTE AQUI
 
 export const AvaliacaoView = {
   async template(id){
