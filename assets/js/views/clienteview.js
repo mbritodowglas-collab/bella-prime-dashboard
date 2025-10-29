@@ -93,6 +93,27 @@ export const ClienteView = {
     const c = Store.byId(id);
     if (!c) return;
 
+    // ===== Helpers locais =====
+    const getSexo = (c) => {
+      const pick = (...keys) =>
+        keys.map(k => (c[k] ?? c._answers?.[k] ?? '')).find(v => v)?.toString().toLowerCase().trim() || '';
+      const s = pick('sexo','gênero','genero','gender');
+      if (s.startsWith('m') || s.startsWith('h')) return 'm';
+      if (s.startsWith('f')) return 'f';
+      return 'f'; // default
+    };
+    const trendColors = (arr, betterWhen='down') => {
+      const gold='#d4af37', red='#b71c1c', neutral='#8a8a8a';
+      return arr.map((v,i)=>{
+        if (i===0 || v==null || isNaN(v)) return neutral;
+        const prev = arr[i-1];
+        if (prev==null || isNaN(prev)) return neutral;
+        const delta = v - prev;
+        if (betterWhen==='down') return delta < 0 ? gold : (delta > 0 ? red : neutral);
+        return delta > 0 ? gold : (delta < 0 ? red : neutral);
+      });
+    };
+
     // botão copiar (respostas do Sheets)
     const copyBtn = document.getElementById('copyAnswers');
     if (copyBtn){
@@ -114,28 +135,32 @@ export const ClienteView = {
 
     if (pesoChart) pesoChart.destroy();
     if (seriePeso.length >= 1 && pesoCtx) {
+      const pesoVals   = seriePeso.map(a => a.peso);
+      const pesoLabels = seriePeso.map(a => a.data || '');
+      const pointCols  = trendColors(pesoVals, 'down'); // cair = melhor
+
       pesoChart = new Chart(pesoCtx, {
         type: 'line',
         data: {
-          labels: seriePeso.map(a => a.data || ''),
+          labels: pesoLabels,
           datasets: [{
             label: 'Peso (kg)',
-            data: seriePeso.map(a => a.peso),
+            data: pesoVals,
             tension: 0.35,
             borderWidth: 3,
             borderColor: '#d4af37',
             backgroundColor: 'rgba(212,175,55,0.18)',
             fill: true,
-            pointRadius: 4,
-            pointHoverRadius: 6
+            pointRadius: 5,
+            pointHoverRadius: 7,
+            pointBackgroundColor: pointCols,
+            pointBorderColor: pointCols
           }]
         },
         options: {
           responsive: true,
-          plugins: { legend: { display: false } },
-          scales: {
-            y: { beginAtZero: false }
-          }
+          plugins: { legend: { display: true } },
+          scales: { y: { beginAtZero: false } }
         }
       });
       if (pesoEmpty) pesoEmpty.style.display = 'none';
@@ -147,36 +172,57 @@ export const ClienteView = {
     const rcqCtx = document.getElementById('chartRCQ');
     const rcqEmpty = document.getElementById('rcqEmpty');
     const serieRCQ = (c.avaliacoes || [])
-      .map(a => ({ ...a, rcq: (typeof a.rcq === 'number' && !isNaN(a.rcq))
-        ? a.rcq
-        : (a.cintura && a.quadril && a.quadril !== 0 ? a.cintura / a.quadril : undefined) }))
+      .map(a => ({
+        ...a,
+        rcq: (typeof a.rcq === 'number' && !isNaN(a.rcq))
+          ? a.rcq
+          : (a.cintura && a.quadril && a.quadril !== 0 ? a.cintura / a.quadril : undefined)
+      }))
       .filter(a => typeof a.rcq === 'number' && !isNaN(a.rcq))
       .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
 
     if (rcqChart) rcqChart.destroy();
     if (serieRCQ.length >= 1 && rcqCtx) {
+      const rcqVals   = serieRCQ.map(a => Number(a.rcq));
+      const rcqLabels = serieRCQ.map(a => a.data || '');
+      const sexo = getSexo(c);
+      const rcqRefVal = sexo === 'm' ? 0.90 : 0.85;
+      const rcqRefLine = Array(rcqVals.length).fill(rcqRefVal);
+      const pointCols  = trendColors(rcqVals, 'down'); // menor RCQ = melhor
+
       rcqChart = new Chart(rcqCtx, {
         type: 'line',
         data: {
-          labels: serieRCQ.map(a => a.data || ''),
-          datasets: [{
-            label: 'RCQ',
-            data: serieRCQ.map(a => Number(a.rcq)),
-            tension: 0.35,
-            borderWidth: 3,
-            borderColor: '#d4af37',
-            backgroundColor: 'rgba(212,175,55,0.18)',
-            fill: true,
-            pointRadius: 4,
-            pointHoverRadius: 6
-          }]
+          labels: rcqLabels,
+          datasets: [
+            {
+              label: 'RCQ',
+              data: rcqVals,
+              tension: 0.35,
+              borderWidth: 3,
+              borderColor: '#d4af37',
+              backgroundColor: 'rgba(212,175,55,0.18)',
+              fill: true,
+              pointRadius: 5,
+              pointHoverRadius: 7,
+              pointBackgroundColor: pointCols,
+              pointBorderColor: pointCols
+            },
+            {
+              label: `Ref. ${rcqRefVal.toFixed(2)} (${sexo === 'm' ? 'M' : 'F'})`,
+              data: rcqRefLine,
+              borderWidth: 2,
+              borderColor: '#7a7a7a',
+              pointRadius: 0,
+              fill: false,
+              borderDash: [6,4]
+            }
+          ]
         },
         options: {
           responsive: true,
-          plugins: { legend: { display: false } },
-          scales: {
-            y: { beginAtZero: false }
-          }
+          plugins: { legend: { display: true } },
+          scales: { y: { beginAtZero: false } }
         }
       });
       if (rcqEmpty) rcqEmpty.style.display = 'none';
