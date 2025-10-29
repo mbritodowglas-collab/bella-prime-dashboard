@@ -1,5 +1,5 @@
 // =====================================
-// BELLA PRIME · APP PRINCIPAL (com respostas completas do Sheets)
+// BELLA PRIME · APP PRINCIPAL (com respostas completas + métricas antropométricas)
 // =====================================
 
 import { DashboardView } from './views/dashboardview.js';
@@ -27,7 +27,7 @@ const pick = (obj, keys) => {
   return undefined;
 };
 
-// ---------- Coleta todas as respostas do Sheets ----------
+// Coleta todas as respostas do Sheets (para consulta completa no perfil)
 function collectAnswersFromRaw(raw){
   if (!raw) return {};
   const ignore = new Set([
@@ -39,7 +39,11 @@ function collectAnswersFromRaw(raw){
     'nivel','nível','nivelatual','fase','faixa',
     'pontuacao','pontuação','score','pontos','nota',
     'ultimotreino','ultimaavaliacao','dataavaliacao','data',
-    'renovacaodias','renovacao','ciclodias'
+    'renovacaodias','renovacao','ciclodias',
+    // métricas que já extraímos separadamente
+    'peso','peso (kg)','peso kg',
+    'cintura','cintura (cm)','cintura cm',
+    'quadril','quadril (cm)','quadril cm'
   ]);
   const norm = s => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
   const out = {};
@@ -93,19 +97,21 @@ export const Store = {
       const registros = (brutos || []).map(raw => {
         const o = normRow(raw);
 
+        // Identificação
         const nome = pick(o, ['nome','nome completo','seu nome','qual e o seu nome','qual seu nome','aluna','cliente']);
         const contato = pick(o, ['contato','whatsapp','telefone']);
         const email   = pick(o, ['email','e-mail','mail']);
         const id      = String(pick(o, ['id','uid','usuario']) || contato || email || cryptoId());
 
+        // Cidade/Estado
         const cidade = pick(o, [
           'cidade-estado','cidade - estado','cidade/estado','cidade uf','cidadeuf','cidade'
         ]) || '';
 
+        // Avaliação base (data/nivel/pontuacao)
         const dataAval = pick(o, ['data','dataavaliacao','ultimotreino']);
         const pont     = Number(pick(o, ['pontuacao','pontuação','score','nota']) || 0);
         const nivelIn  = pick(o, ['nivel','nível','fase','faixa']);
-
         const nivel = (() => {
           const n = strip(nivelIn || '');
           if (n.startsWith('fund')) return 'Fundação';
@@ -116,6 +122,16 @@ export const Store = {
           if (pont <= 6)  return 'Ascensão';
           return 'Domínio';
         })();
+
+        // ---- MÉTRICAS ANTROPOMÉTRICAS ----
+        const pesoRaw    = pick(o, ['peso','peso (kg)','peso kg']);
+        const cinturaRaw = pick(o, ['cintura','cintura (cm)','cintura cm']);
+        const quadrilRaw = pick(o, ['quadril','quadril (cm)','quadril cm']);
+
+        const peso    = (pesoRaw    !== undefined && pesoRaw !== '')    ? Number(String(pesoRaw).replace(',', '.'))    : undefined;
+        const cintura = (cinturaRaw !== undefined && cinturaRaw !== '') ? Number(String(cinturaRaw).replace(',', '.')) : undefined;
+        const quadril = (quadrilRaw !== undefined && quadrilRaw !== '') ? Number(String(quadrilRaw).replace(',', '.')) : undefined;
+        const rcq = (cintura && quadril && quadril !== 0) ? (cintura / quadril) : undefined;
 
         const base = {
           id,
@@ -131,24 +147,47 @@ export const Store = {
           _answers: collectAnswersFromRaw(raw)
         };
 
-        // adiciona avaliação
-        if (dataAval || !isNaN(pont)) {
+        // adiciona avaliação com métricas, se houver algo
+        if (dataAval || !isNaN(pont) || peso !== undefined || cintura !== undefined || quadril !== undefined) {
           const dataISO = /^\d{4}-\d{2}-\d{2}$/.test(String(dataAval)) ? String(dataAval) : todayISO();
-          base.avaliacoes.push({ data: dataISO, pontuacao: isNaN(pont) ? 0 : pont, nivel });
+          base.avaliacoes.push({
+            data: dataISO,
+            pontuacao: isNaN(pont) ? 0 : pont,
+            nivel,
+            peso: isNaN(peso) ? undefined : peso,
+            cintura: isNaN(cintura) ? undefined : cintura,
+            quadril: isNaN(quadril) ? undefined : quadril,
+            rcq: (typeof rcq === 'number' && !isNaN(rcq)) ? rcq : undefined
+          });
         }
         return base;
       });
 
-      // colapsa por id
+      // colapsa por id (mantém histórico)
       const map = new Map();
       for (const r of registros) {
         if (!map.has(r.id)) { map.set(r.id, r); continue; }
         const dst = map.get(r.id);
         for (const f of ['nome','contato','email','cidade']) if (!dst[f] && r[f]) dst[f] = r[f];
         dst.avaliacoes = [...(dst.avaliacoes||[]), ...(r.avaliacoes||[])];
+        // não sobrescreve _answers; mantém o primeiro (ou você pode mesclar se quiser)
       }
 
-      this.state.clientes = [...map.values()];
+      // ordena histórico por data
+      const list = [...map.values()];
+      for (const c of list) {
+        if (Array.isArray(c.avaliacoes)) {
+          c.avaliacoes.sort((a,b)=> (a.data||'').localeCompare(b.data||''));
+          const last = c.avaliacoes[c.avaliacoes.length-1];
+          if (last) {
+            c.pontuacao    = (typeof last.pontuacao === 'number') ? last.pontuacao : c.pontuacao;
+            c.nivel        = last.nivel || c.nivel;
+            c.ultimoTreino = c.ultimoTreino || last.data;
+          }
+        }
+      }
+
+      this.state.clientes = list;
       this.persist();
       console.log(`✅ Normalizado: ${this.state.clientes.length} clientes`);
     }catch(e){
