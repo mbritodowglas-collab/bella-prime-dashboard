@@ -2,6 +2,7 @@ import { Store } from '../app.js';
 
 let pesoChart = null;
 let rcqChart  = null;
+let whtrChart = null;
 
 export const ClienteView = {
   async template(id){
@@ -18,7 +19,7 @@ export const ClienteView = {
         </tr>
       `).join('');
 
-    // Bloco de respostas completas (só se existir e tiver algo)
+    // Bloco de respostas completas (Sheets) — opcional
     let blocoRespostas = '';
     if (c._answers && Object.keys(c._answers).length > 0) {
       const lista = Object.entries(c._answers)
@@ -40,11 +41,14 @@ export const ClienteView = {
       `;
     }
 
-    // Info antropométrica mais recente (se houver)
-    const last = (c.avaliacoes||[]).slice().reverse().find(a => a.peso || a.cintura || a.quadril || a.rcq) || {};
-    const resumoAntropo = (last.peso || last.rcq)
-      ? `<p style="margin-top:6px"><b>Peso atual:</b> ${fmtNum(last.peso)} kg
-         ${last.rcq ? ` · <b>RCQ:</b> ${fmtNum(last.rcq, 3)}` : ''}</p>`
+    // Resumo antropométrico mais recente
+    const last = (c.avaliacoes||[]).slice().reverse().find(a => a.peso || a.cintura || a.quadril || a.rcq || a.whtr) || {};
+    const resumoAntropo = (last.peso || last.rcq || last.whtr)
+      ? `<p style="margin-top:6px">
+           ${last.peso ? `<b>Peso atual:</b> ${fmtNum(last.peso)} kg` : ''}
+           ${last.rcq  ? ` · <b>RCQ:</b> ${fmtNum(last.rcq, 3)}` : ''}
+           ${last.whtr ? ` · <b>WHtR:</b> ${fmtNum(last.whtr, 3)}` : ''}
+         </p>`
       : '';
 
     return `
@@ -83,6 +87,13 @@ export const ClienteView = {
         <canvas id="chartRCQ" height="160"></canvas>
       </section>
 
+      <section class="card chart-card">
+        <h3>Relação Cintura/Estatura (WHtR)</h3>
+        <div id="whtrEmpty" style="display:none;color:#aaa">Sem dados de cintura/estatura suficientes.</div>
+        <canvas id="chartWHtR" height="160"></canvas>
+        <small style="opacity:.75">Linha guia 0,50 = meta de saúde (cintura &lt; 50% da estatura).</small>
+      </section>
+
       <section class="card">
         <button class="btn btn-primary" id="novaAvaliacaoBtn">+ Nova Avaliação</button>
       </section>
@@ -93,28 +104,7 @@ export const ClienteView = {
     const c = Store.byId(id);
     if (!c) return;
 
-    // ===== Helpers locais =====
-    const getSexo = (c) => {
-      const pick = (...keys) =>
-        keys.map(k => (c[k] ?? c._answers?.[k] ?? '')).find(v => v)?.toString().toLowerCase().trim() || '';
-      const s = pick('sexo','gênero','genero','gender');
-      if (s.startsWith('m') || s.startsWith('h')) return 'm';
-      if (s.startsWith('f')) return 'f';
-      return 'f'; // default
-    };
-    const trendColors = (arr, betterWhen='down') => {
-      const gold='#d4af37', red='#b71c1c', neutral='#8a8a8a';
-      return arr.map((v,i)=>{
-        if (i===0 || v==null || isNaN(v)) return neutral;
-        const prev = arr[i-1];
-        if (prev==null || isNaN(prev)) return neutral;
-        const delta = v - prev;
-        if (betterWhen==='down') return delta < 0 ? gold : (delta > 0 ? red : neutral);
-        return delta > 0 ? gold : (delta < 0 ? red : neutral);
-      });
-    };
-
-    // botão copiar (respostas do Sheets)
+    // copiar respostas (Sheets)
     const copyBtn = document.getElementById('copyAnswers');
     if (copyBtn){
       copyBtn.addEventListener('click', () => {
@@ -126,116 +116,139 @@ export const ClienteView = {
       });
     }
 
-    // ====== Gráfico de Peso ======
+    // ===== Peso =====
     const pesoCtx = document.getElementById('chartPeso');
     const pesoEmpty = document.getElementById('pesoEmpty');
     const seriePeso = (c.avaliacoes || [])
-      .filter(a => typeof a.peso === 'number' && !isNaN(a.peso))
+      .filter(a => isNum(a.peso))
       .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
 
     if (pesoChart) pesoChart.destroy();
-    if (seriePeso.length >= 1 && pesoCtx) {
-      const pesoVals   = seriePeso.map(a => a.peso);
-      const pesoLabels = seriePeso.map(a => a.data || '');
-      const pointCols  = trendColors(pesoVals, 'down'); // cair = melhor
-
+    if (pesoCtx && seriePeso.length >= 1) {
       pesoChart = new Chart(pesoCtx, {
         type: 'line',
         data: {
-          labels: pesoLabels,
+          labels: seriePeso.map(a => a.data || ''),
           datasets: [{
             label: 'Peso (kg)',
-            data: pesoVals,
+            data: seriePeso.map(a => Number(a.peso)),
             tension: 0.35,
             borderWidth: 3,
             borderColor: '#d4af37',
             backgroundColor: 'rgba(212,175,55,0.18)',
             fill: true,
-            pointRadius: 5,
-            pointHoverRadius: 7,
-            pointBackgroundColor: pointCols,
-            pointBorderColor: pointCols
+            pointRadius: 4,
+            pointHoverRadius: 6
           }]
         },
-        options: {
-          responsive: true,
-          plugins: { legend: { display: true } },
-          scales: { y: { beginAtZero: false } }
-        }
+        options: { responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:false } } }
       });
       if (pesoEmpty) pesoEmpty.style.display = 'none';
-    } else {
-      if (pesoEmpty) pesoEmpty.style.display = 'block';
-    }
+    } else if (pesoEmpty) { pesoEmpty.style.display = 'block'; }
 
-    // ====== Gráfico de RCQ ======
+    // ===== RCQ (cintura/quadril) =====
     const rcqCtx = document.getElementById('chartRCQ');
     const rcqEmpty = document.getElementById('rcqEmpty');
     const serieRCQ = (c.avaliacoes || [])
-      .map(a => ({
-        ...a,
-        rcq: (typeof a.rcq === 'number' && !isNaN(a.rcq))
-          ? a.rcq
-          : (a.cintura && a.quadril && a.quadril !== 0 ? a.cintura / a.quadril : undefined)
-      }))
-      .filter(a => typeof a.rcq === 'number' && !isNaN(a.rcq))
+      .map(a => {
+        const rcq = isNum(a.rcq)
+          ? Number(a.rcq)
+          : (isNum(a.cintura) && isNum(a.quadril) && Number(a.quadril) !== 0
+              ? Number(a.cintura) / Number(a.quadril)
+              : undefined);
+        return { ...a, rcq };
+      })
+      .filter(a => isNum(a.rcq))
       .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
 
     if (rcqChart) rcqChart.destroy();
-    if (serieRCQ.length >= 1 && rcqCtx) {
-      const rcqVals   = serieRCQ.map(a => Number(a.rcq));
-      const rcqLabels = serieRCQ.map(a => a.data || '');
-      const sexo = getSexo(c);
-      const rcqRefVal = sexo === 'm' ? 0.90 : 0.85;
-      const rcqRefLine = Array(rcqVals.length).fill(rcqRefVal);
-      const pointCols  = trendColors(rcqVals, 'down'); // menor RCQ = melhor
-
+    if (rcqCtx && serieRCQ.length >= 1) {
       rcqChart = new Chart(rcqCtx, {
         type: 'line',
         data: {
-          labels: rcqLabels,
+          labels: serieRCQ.map(a => a.data || ''),
+          datasets: [{
+            label: 'RCQ',
+            data: serieRCQ.map(a => Number(a.rcq)),
+            tension: 0.35,
+            borderWidth: 3,
+            borderColor: '#d4af37',
+            backgroundColor: 'rgba(212,175,55,0.18)',
+            fill: true,
+            pointRadius: 4,
+            pointHoverRadius: 6
+          }]
+        },
+        options: { responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:false } } }
+      });
+      if (rcqEmpty) rcqEmpty.style.display = 'none';
+    } else if (rcqEmpty) { rcqEmpty.style.display = 'block'; }
+
+    // ===== WHtR (cintura/estatura) =====
+    const whtrCtx = document.getElementById('chartWHtR');
+    const whtrEmpty = document.getElementById('whtrEmpty');
+
+    const serieWHtR = (c.avaliacoes || [])
+      .map(a => {
+        const cintura = toNum(a.cintura);
+        let altura = toNum(a.altura); // aceita cm ou m
+        if (isNum(altura) && altura <= 3) altura = altura * 100; // metros -> cm
+        const whtr = isNum(a.whtr)
+          ? Number(a.whtr)
+          : (isNum(cintura) && isNum(altura) && altura !== 0 ? Number(cintura) / Number(altura) : undefined);
+        return { ...a, whtr };
+      })
+      .filter(a => isNum(a.whtr))
+      .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
+
+    if (whtrChart) whtrChart.destroy();
+    if (whtrCtx && serieWHtR.length >= 1) {
+      const labels = serieWHtR.map(a => a.data || '');
+      whtrChart = new Chart(whtrCtx, {
+        type: 'line',
+        data: {
+          labels,
           datasets: [
             {
-              label: 'RCQ',
-              data: rcqVals,
+              label: 'WHtR',
+              data: serieWHtR.map(a => Number(a.whtr)),
               tension: 0.35,
               borderWidth: 3,
               borderColor: '#d4af37',
               backgroundColor: 'rgba(212,175,55,0.18)',
               fill: true,
-              pointRadius: 5,
-              pointHoverRadius: 7,
-              pointBackgroundColor: pointCols,
-              pointBorderColor: pointCols
+              pointRadius: 4,
+              pointHoverRadius: 6
             },
+            // Linha guia em 0.50
             {
-              label: `Ref. ${rcqRefVal.toFixed(2)} (${sexo === 'm' ? 'M' : 'F'})`,
-              data: rcqRefLine,
-              borderWidth: 2,
-              borderColor: '#7a7a7a',
+              label: 'Guia 0.50',
+              data: labels.map(() => 0.5),
+              borderWidth: 1,
+              borderColor: '#888',
               pointRadius: 0,
               fill: false,
-              borderDash: [6,4]
+              borderDash: [6,4],
+              tension: 0
             }
           ]
         },
         options: {
           responsive: true,
-          plugins: { legend: { display: true } },
-          scales: { y: { beginAtZero: false } }
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: false, suggestedMin: 0.35, suggestedMax: 0.75 } }
         }
       });
-      if (rcqEmpty) rcqEmpty.style.display = 'none';
-    } else {
-      if (rcqEmpty) rcqEmpty.style.display = 'block';
-    }
+      if (whtrEmpty) whtrEmpty.style.display = 'none';
+    } else if (whtrEmpty) { whtrEmpty.style.display = 'block'; }
 
+    // Nova avaliação
     const btn = document.getElementById('novaAvaliacaoBtn');
     if (btn) btn.addEventListener('click', () => { location.hash = `#/avaliacao/${id}`; });
   }
 };
 
-// helpers
+// ===== helpers =====
 function escapeHTML(s){
   return String(s || '').replace(/[&<>"']/g, m =>
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
@@ -243,4 +256,9 @@ function escapeHTML(s){
 function escapePlain(s){ return String(s || '').replace(/\r?\n/g, '\n'); }
 function fmtNum(v, digits=1){
   return (typeof v === 'number' && !isNaN(v)) ? Number(v).toFixed(digits) : '-';
+}
+function isNum(v){ return typeof v === 'number' && !isNaN(v); }
+function toNum(v){
+  const n = Number(v);
+  return (typeof n === 'number' && !isNaN(n)) ? n : undefined;
 }
