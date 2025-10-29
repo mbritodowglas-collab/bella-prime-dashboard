@@ -5,7 +5,15 @@ let chartRef = null;
 export const DashboardView = {
   async template(){
     const k = kpi(Store.state.clientes);
+    const emptyWarn = (k.total === 0)
+      ? `<div class="card" style="border:1px dashed #d4af37;color:#d4af37">
+           Nenhum cliente carregado. Toque em <b>Atualizar (Google)</b> ou <b>Importar</b>.
+         </div>`
+      : '';
+
     return `
+      ${emptyWarn}
+
       <section class="row">
         <div class="kpi"><h4>Total</h4><div class="num">${k.total}</div></div>
         <div class="kpi"><h4>Fundação</h4><div class="num">${k.fundacao}</div></div>
@@ -56,7 +64,7 @@ export const DashboardView = {
   async init(){
     const $ = s => document.querySelector(s);
 
-    // filtros – garante objeto existente
+    // garante objeto de filtros
     Store.state.filters = Store.state.filters || { q:'', nivel:'', status:'' };
     $('#q').value      = Store.state.filters.q || '';
     $('#nivel').value  = Store.state.filters.nivel || '';
