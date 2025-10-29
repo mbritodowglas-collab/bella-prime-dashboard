@@ -17,28 +17,42 @@ export const ClienteView = {
         </tr>
       `).join('');
 
-    // monta lista de respostas completas
-    const answers = c._answers || c;
-    const ignore = new Set(['id','avaliacoes','_answers','nivel','pontuacao','ultimoTreino','renovacaoDias']);
-    const lines = Object.entries(answers)
-      .filter(([k,v]) => !ignore.has(k) && v !== '' && v != null)
-      .sort(([a],[b]) => a.localeCompare(b,'pt',{sensitivity:'base'}));
-
-    const answersHTML = lines.length
-      ? lines.map(([k,v]) => `<tr><td>${escapeHTML(k)}</td><td>${escapeHTML(String(v))}</td></tr>`).join('')
-      : `<tr><td colspan="2">Sem respostas adicionais.</td></tr>`;
+    // Bloco de respostas completas (só se existir e tiver algo)
+    let blocoRespostas = '';
+    if (c._answers && Object.keys(c._answers).length > 0) {
+      const lista = Object.entries(c._answers)
+        .map(([k,v]) => `<li><b>${escapeHTML(k)}:</b> ${escapeHTML(v)}</li>`)
+        .join('');
+      const texto = Object.entries(c._answers)
+        .map(([k,v]) => `${k}: ${v}`)
+        .join('\n');
+      blocoRespostas = `
+        <section class="card">
+          <h3>Respostas completas (Sheets)</h3>
+          <ul style="margin:8px 0 12px 18px;">${lista}</ul>
+          <div class="row" style="gap:10px;">
+            <button class="btn btn-outline" id="copyAnswers">Copiar lista</button>
+            <small style="opacity:.8">Copia todas as respostas para análise no ChatGPT</small>
+          </div>
+          <textarea id="answersText" style="position:absolute;left:-9999px;top:-9999px;">${escapePlain(texto)}</textarea>
+        </section>
+      `;
+    }
 
     return `
       <section class="card">
         <a href="#/" class="btn btn-outline" style="margin-bottom:10px;">← Voltar</a>
         <h2>${escapeHTML(c.nome || '')}</h2>
-        <p><b>Nível atual:</b> <span class="badge">${c.nivel}</span></p>
+        <p><b>Nível atual:</b> <span class="badge">${c.nivel || '-'}</span></p>
         <p><b>Última pontuação:</b> ${c.pontuacao ?? '-'}</p>
         <p><b>Última avaliação:</b> ${c.ultimoTreino ?? '-'}</p>
-        ${c.cidade ? `<p><b>Cidade/Estado:</b> ${escapeHTML(c.cidade)}</p>` : ''}
-        ${c.email ? `<p><b>E-mail:</b> ${escapeHTML(c.email)}</p>` : ''}
+        ${c.objetivo ? `<p><b>Objetivo:</b> ${escapeHTML(c.objetivo)}</p>` : ''}
+        ${c.cidade  ? `<p><b>Cidade/Estado:</b> ${escapeHTML(c.cidade)}</p>` : ''}
+        ${c.email   ? `<p><b>E-mail:</b> ${escapeHTML(c.email)}</p>` : ''}
         ${c.contato ? `<p><b>WhatsApp:</b> ${escapeHTML(c.contato)}</p>` : ''}
       </section>
+
+      ${blocoRespostas}
 
       <section class="card">
         <h3>Histórico de Avaliações</h3>
@@ -54,20 +68,6 @@ export const ClienteView = {
       </section>
 
       <section class="card">
-        <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;">
-          <h3 style="margin:0">Respostas completas (Sheets)</h3>
-          <div style="display:flex;gap:8px;">
-            <button class="btn btn-outline" id="copyAnswers">Copiar tudo</button>
-            <button class="btn btn-outline" id="downloadJSON">Baixar JSON</button>
-          </div>
-        </div>
-        <table class="table" style="margin-top:10px">
-          <thead><tr><th>Pergunta</th><th>Resposta</th></tr></thead>
-          <tbody id="answersBody">${answersHTML}</tbody>
-        </table>
-      </section>
-
-      <section class="card">
         <button class="btn btn-primary" id="novaAvaliacaoBtn">+ Nova Avaliação</button>
       </section>
     `;
@@ -76,6 +76,18 @@ export const ClienteView = {
   async init(id){
     const c = Store.byId(id);
     if (!c) return;
+
+    // botão copiar (só se existir)
+    const copyBtn = document.getElementById('copyAnswers');
+    if (copyBtn){
+      copyBtn.addEventListener('click', () => {
+        const ta = document.getElementById('answersText');
+        ta.select();
+        document.execCommand('copy');
+        copyBtn.textContent = 'Copiado!';
+        setTimeout(()=> copyBtn.textContent = 'Copiar lista', 1200);
+      });
+    }
 
     // gráfico
     const ctx = document.getElementById('chartEvolucao');
@@ -107,43 +119,14 @@ export const ClienteView = {
       }
     });
 
-    // copiar todas as respostas (texto plano "Pergunta: Resposta")
-    const btnCopy = document.getElementById('copyAnswers');
-    if (btnCopy){
-      btnCopy.addEventListener('click', async () => {
-        const answers = c._answers || c;
-        const ignore = new Set(['id','avaliacoes','_answers','nivel','pontuacao','ultimoTreino','renovacaoDias']);
-        const text = Object.entries(answers)
-          .filter(([k,v]) => !ignore.has(k) && v !== '' && v != null)
-          .sort(([a],[b]) => a.localeCompare(b,'pt',{sensitivity:'base'}))
-          .map(([k,v]) => `${k}: ${String(v)}`)
-          .join('\n');
-        await navigator.clipboard.writeText(text || 'Sem respostas.');
-        btnCopy.textContent = 'Copiado!';
-        setTimeout(()=> btnCopy.textContent = 'Copiar tudo', 1500);
-      });
-    }
-
-    // baixar JSON da cliente
-    const btnJSON = document.getElementById('downloadJSON');
-    if (btnJSON){
-      btnJSON.addEventListener('click', () => {
-        const blob = new Blob([JSON.stringify(c._answers || c, null, 2)], { type:'application/json' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = `cliente-${(c.nome||c.id||'sem-nome')}.json`;
-        a.click();
-        URL.revokeObjectURL(a.href);
-      });
-    }
-
-    // botão de nova avaliação
     const btn = document.getElementById('novaAvaliacaoBtn');
     if (btn) btn.addEventListener('click', () => { location.hash = `#/avaliacao/${id}`; });
   }
 };
 
+// helpers
 function escapeHTML(s){
   return String(s || '').replace(/[&<>"']/g, m =>
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 }
+function escapePlain(s){ return String(s || '').replace(/\r?\n/g, '\n'); }
