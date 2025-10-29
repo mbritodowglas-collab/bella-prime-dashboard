@@ -1,5 +1,5 @@
 // =====================================
-// BELLA PRIME · APP PRINCIPAL (default no painel)
+// BELLA PRIME · APP PRINCIPAL (default no painel + normalização Sheets)
 // =====================================
 
 import { DashboardView } from './views/dashboardview.js';
@@ -8,12 +8,24 @@ import { AvaliacaoView } from './views/avaliacaoview.js';
 
 const SHEETS_API = 'https://script.google.com/macros/s/AKfycbwsOtURP_fuMDzfxysaeVITPZkl2GfRXfz7io9plgAFsgbpScIZGzVTHaRfWPepZv26/exec';
 
+// ---------- Datas ----------
 const todayISO = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 };
 const parseISO = (s) => new Date(`${s}T12:00:00`);
 const diffDays  = (a,b)=> Math.floor((parseISO(a)-parseISO(b))/(1000*60*60*24));
+
+// ---------- Utils ----------
+function cryptoId(){
+  try { return crypto.randomUUID(); }
+  catch { return 'id_' + Math.random().toString(36).slice(2,9); }
+}
+const strip = (s='') => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+const pick = (obj, keys) => {
+  for (const k of keys) if (obj[k] !== undefined && obj[k] !== '') return obj[k];
+  return undefined;
+};
 
 // ---------- Dados (Sheets -> seed.json) ----------
 async function loadSeed(){
@@ -45,23 +57,106 @@ export const Store = {
 
   async init(){
     try{
-      const dados = await loadSeed();
-      const norm = (dados || []).map(raw => {
-        const c = { ...raw };
+      const brutos = await loadSeed();
 
-        // “Cidade - Estado” -> cidade
-        if (!c.cidade && c['Cidade - Estado']) {
-          c.cidade = c['Cidade - Estado'];
-          delete c['Cidade - Estado'];
+      // 1) normaliza chaves (case/acentos) por linha
+      const normRow = (raw) => {
+        const o = {};
+        for (const [k, v] of Object.entries(raw || {})) o[strip(k)] = v;
+        return o;
+      };
+
+      // 2) transforma cada linha em um "registro base" com avaliação opcional
+      const registros = (brutos || []).map(raw => {
+        const o = normRow(raw);
+
+        const nome    = pick(o, ['nome','aluna','cliente','paciente']);
+        const contato = pick(o, ['contato','whatsapp','whats','telefone']);
+        const email   = pick(o, ['email','e-mail','mail']);
+        const id      = String(pick(o, ['id','identificador','uid','usuario']) || contato || email || cryptoId());
+
+        // Aceita várias formas de "Cidade - Estado"
+        const cidade = pick(o, [
+          'cidade-estado','cidade - estado','cidade/estado','cidade_estado',
+          'cidade-uf','cidade uf','cidadeuf','cidade'
+        ]) || '';
+
+        // Campos de avaliação (data / pontuação / nível)
+        const dataAval = pick(o, ['data','dataavaliacao','data da avaliacao','ultimotreino','ultimaavaliacao']);
+        const pont     = Number(pick(o, ['pontuacao','pontuação','score','pontos','nota']) || 0);
+        const nivelIn  = pick(o, ['nivel','nível','nivelatual','fase','faixa']);
+
+        // normaliza nível
+        const nivel = (() => {
+          const n = strip(nivelIn || '');
+          if (n.startsWith('fund')) return 'Fundação';
+          if (n.startsWith('asc'))  return 'Ascensão';
+          if (n.startsWith('dom'))  return 'Domínio';
+          if (n.startsWith('over')) return 'OverPrime';
+          if (pont <= 2)  return 'Fundação';
+          if (pont <= 6)  return 'Ascensão';
+          if (pont <= 10) return 'Domínio';
+          return 'Domínio';
+        })();
+
+        const ultimoTreino = pick(o, ['ultimotreino','ultimaavaliacao','dataavaliacao','data']) || undefined;
+
+        const base = {
+          id,
+          nome: nome || '(Sem nome)',
+          contato: contato || '',
+          email: email || '',
+          cidade,
+          nivel,
+          pontuacao: isNaN(pont) ? 0 : pont,
+          ultimoTreino: ultimoTreino || undefined,
+          renovacaoDias: Number(pick(o,['renovacaodias','renovacao','ciclodias'])) || 30,
+          avaliacoes: []
+        };
+
+        // se existir avaliação nesta linha, adiciona
+        if (dataAval || !isNaN(pont)) {
+          const dataISO = (dataAval && /^\d{4}-\d{2}-\d{2}$/.test(String(dataAval))) ? String(dataAval) : todayISO();
+          base.avaliacoes.push({ data: dataISO, pontuacao: isNaN(pont) ? 0 : pont, nivel });
+          base.ultimoTreino = base.ultimoTreino || dataISO;
+          base.pontuacao    = isNaN(pont) ? base.pontuacao : pont;
         }
 
-        c.id         = String(c.id ?? c.email ?? c.contato ?? cryptoId());
-        c.avaliacoes = Array.isArray(c.avaliacoes) ? c.avaliacoes : [];
-        return c;
+        return base;
       });
 
-      this.state.clientes = norm;
+      // 3) colapsa por id, mesclando históricos (dedup)
+      const map = new Map();
+      for (const r of registros) {
+        if (!map.has(r.id)) { map.set(r.id, r); continue; }
+        const dst = map.get(r.id);
+
+        // completa cadastro
+        for (const f of ['nome','contato','email','cidade','nivel','pontuacao','ultimoTreino','renovacaoDias']) {
+          if (!dst[f] && r[f]) dst[f] = r[f];
+        }
+
+        // mescla avaliações
+        const avs = [...(dst.avaliacoes||[]), ...(r.avaliacoes||[])];
+        const seen = new Set(); const dedup = [];
+        for (const a of avs) {
+          const key = `${a.data}|${a.pontuacao}`;
+          if (!seen.has(key)) { seen.add(key); dedup.push(a); }
+        }
+        dedup.sort((a,b)=> a.data.localeCompare(b.data));
+        dst.avaliacoes = dedup;
+
+        const last = dedup[dedup.length-1];
+        if (last) {
+          dst.pontuacao    = last.pontuacao;
+          dst.nivel        = last.nivel || dst.nivel;
+          dst.ultimoTreino = dst.ultimoTreino || last.data;
+        }
+      }
+
+      this.state.clientes = [...map.values()];
       this.persist();
+      console.log(`✅ Normalizado: ${this.state.clientes.length} clientes`);
     }catch(e){
       console.error('Falha init()', e);
       this.state.clientes = [];
@@ -124,11 +219,6 @@ export const Store = {
   }
 };
 
-function cryptoId(){
-  try { return crypto.randomUUID(); }
-  catch { return 'id_' + Math.random().toString(36).slice(2,9); }
-}
-
 // ---------- Status ----------
 export function statusCalc(c){
   const renov = c.renovacaoDias ?? 30;
@@ -165,9 +255,8 @@ async function render(){
 
 window.addEventListener('hashchange', render);
 
-// ---------- Boot: SEM depender de clicar “Início” ----------
+// ---------- Boot ----------
 (async () => {
   await Store.init();
-  // não força hash — render() já considera dashboard como default
-  await render();
+  await render(); // default: dashboard
 })();
