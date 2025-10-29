@@ -21,7 +21,8 @@ export const ClienteView = {
       <section class="card">
         <a href="#/" class="btn btn-outline" style="margin-bottom:10px;">← Voltar</a>
         <h2>${escapeHTML(c.nome || '')}</h2>
-        <p><b>Nível atual:</b> <span class="badge">${c.nivel}</span></p>
+        ${c.cidade ? `<p><b>Cidade/Estado:</b> ${escapeHTML(c.cidade)}</p>` : ''}
+        <p><b>Nível atual:</b> <span class="badge">${c.nivel ?? '-'}</span></p>
         <p><b>Última pontuação:</b> ${c.pontuacao ?? '-'}</p>
         <p><b>Última avaliação:</b> ${c.ultimoTreino ?? '-'}</p>
         ${c.objetivo ? `<p><b>Objetivo:</b> ${escapeHTML(c.objetivo)}</p>` : ''}
@@ -52,35 +53,39 @@ export const ClienteView = {
     const c = Store.byId(id);
     if (!c) return;
 
+    // gráfico
     const ctx = document.getElementById('chartEvolucao');
     if (chartRef) chartRef.destroy();
 
     const labels = (c.avaliacoes || []).map(a => a.data);
     const pontos = (c.avaliacoes || []).map(a => a.pontuacao);
 
-    chartRef = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels,
-        datasets: [{
-          label: 'Pontuação',
-          data: pontos,
-          tension: 0.4,
-          borderWidth: 3,
-          borderColor: '#d4af37',
-          backgroundColor: 'rgba(212,175,55,0.2)',
-          fill: true,
-          pointRadius: 5,
-          pointHoverRadius: 7
-        }]
-      },
-      options: {
-        responsive: true,
-        plugins: { legend: { display: false } },
-        scales: { y: { beginAtZero: true, ticks: { stepSize: 2 } } }
-      }
-    });
+    if (window.Chart && ctx) {
+      chartRef = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            label: 'Pontuação',
+            data: pontos,
+            tension: 0.4,
+            borderWidth: 3,
+            borderColor: '#d4af37',
+            backgroundColor: 'rgba(212,175,55,0.2)',
+            fill: true,
+            pointRadius: 5,
+            pointHoverRadius: 7
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true, ticks: { stepSize: 2 } } }
+        }
+      });
+    }
 
+    // botão de nova avaliação
     const btn = document.getElementById('novaAvaliacaoBtn');
     if (btn) btn.addEventListener('click', () => { location.hash = `#/avaliacao/${id}`; });
   }
