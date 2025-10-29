@@ -1,170 +1,157 @@
-// =====================================
-// BELLA PRIME · APP PRINCIPAL (default no painel, com todas as colunas do Sheets)
-// =====================================
+import { Store } from '../app.js';
 
-import { DashboardView } from './views/dashboardview.js?v=3';
-import { ClienteView }   from './views/clienteview.js?v=3';
-import { AvaliacaoView } from './views/avaliacaoview.js?v=3';
+let chartRef = null;
 
-const SHEETS_API = 'https://script.google.com/macros/s/AKfycbwsOtURP_fuMDzfxysaeVITPZkl2GfRXfz7io9plgAFsgbpScIZGzVTHaRfWPepZv26/exec';
+export const ClienteView = {
+  async template(id){
+    const c = Store.byId(id);
+    if (!c) return `<div class="card"><h2>Cliente não encontrada</h2></div>`;
 
-const todayISO = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-};
-const parseISO = (s) => new Date(`${s}T12:00:00`);
-const diffDays  = (a,b)=> Math.floor((parseISO(a)-parseISO(b))/(1000*60*60*24));
+    const historico = (c.avaliacoes || [])
+      .sort((a,b)=> a.data.localeCompare(b.data))
+      .map(a=> `
+        <tr>
+          <td>${a.data}</td>
+          <td>${a.nivel}</td>
+          <td>${a.pontuacao}</td>
+        </tr>
+      `).join('');
 
-// --- Dados (Sheets -> seed.json) ---
-async function loadSeed(){
-  try{
-    const r = await fetch(SHEETS_API, { cache:'no-store' });
-    if(!r.ok) throw new Error(`Sheets HTTP ${r.status}`);
-    const data = await r.json();
-    if(!Array.isArray(data)) throw new Error('Sheets retornou formato inválido');
-    return data;
-  }catch(e){
-    console.warn('Sheets falhou, usando seed.json:', e);
-    const r2 = await fetch('./assets/data/seed.json', { cache:'no-store' });
-    return await r2.json();
-  }
-}
+    // ----- monta pares pergunta → resposta com TUDO que veio do Sheets -----
+    const { pares, linhasTexto, jsonStr } = buildAnswerBlocks(c);
 
-// --- Store ---
-const KEY = 'bp_clientes_v1';
+    const respostasHTML = pares.length
+      ? `<dl class="kv">${pares.map(([k,v])=>(
+          `<div class="kv-row"><dt>${escapeHTML(k)}</dt><dd>${escapeHTML(v)}</dd></div>`
+        )).join('')}</dl>`
+      : '<p style="color:#aaa">Sem respostas adicionais encontradas.</p>';
 
-export const Store = {
-  state: {
-    clientes: [],
-    filters: { q:'', nivel:'', status:'' },
-    scroll: { '/': 0 }
+    return `
+      <section class="card">
+        <a href="#/" class="btn btn-outline" style="margin-bottom:10px;">← Voltar</a>
+        <h2>${escapeHTML(c.nome || '')}</h2>
+        <p><b>Nível atual:</b> <span class="badge">${c.nivel || '-'}</span></p>
+        <p><b>Última pontuação:</b> ${c.pontuacao ?? '-'}</p>
+        <p><b>Última avaliação:</b> ${c.ultimoTreino ?? '-'}</p>
+        ${c.objetivo ? `<p><b>Objetivo:</b> ${escapeHTML(c.objetivo)}</p>` : ''}
+        ${c.email ? `<p><b>E-mail:</b> ${escapeHTML(c.email)}</p>` : ''}
+        ${c.contato ? `<p><b>WhatsApp:</b> ${escapeHTML(c.contato)}</p>` : ''}
+        ${c.cidade ? `<p><b>Cidade/Estado:</b> ${escapeHTML(c.cidade)}</p>` : ''}
+      </section>
+
+      <section class="card">
+        <h3>Respostas da Avaliação (todas as colunas do Sheets)</h3>
+        <div class="row" style="gap:10px;margin:8px 0 14px">
+          <button class="btn btn-outline" id="copyListaBtn">Copiar lista</button>
+          <button class="btn btn-outline" id="copyJsonBtn">Copiar JSON</button>
+        </div>
+        ${respostasHTML}
+      </section>
+
+      <section class="card">
+        <h3>Histórico de Avaliações</h3>
+        <table class="table">
+          <thead><tr><th>Data</th><th>Nível</th><th>Pontuação</th></tr></thead>
+          <tbody>${historico || '<tr><td colspan="3">Nenhum registro ainda.</td></tr>'}</tbody>
+        </table>
+      </section>
+
+      <section class="card chart-card">
+        <h3>Evolução de Pontuação</h3>
+        <canvas id="chartEvolucao" height="160"></canvas>
+      </section>
+
+      <section class="card">
+        <button class="btn btn-primary" id="novaAvaliacaoBtn">+ Nova Avaliação</button>
+      </section>
+
+      <!-- dados pré-formatados para os botões de copiar -->
+      <textarea id="__copy_lista__" style="position:absolute;left:-9999px;top:-9999px">${linhasTexto}</textarea>
+      <textarea id="__copy_json__"  style="position:absolute;left:-9999px;top:-9999px">${jsonStr}</textarea>
+    `;
   },
 
-  async init(){
-    const dados = await loadSeed();
+  async init(id){
+    const c = Store.byId(id);
+    if (!c) return;
 
-    // Mantém TODAS as colunas originais em _sheet (para consulta)
-    const norm = (dados || []).map(raw => {
-      const c = { ...raw };
+    // gráfico
+    const ctx = document.getElementById('chartEvolucao');
+    if (chartRef) chartRef.destroy();
 
-      if (!c.cidade && c['Cidade - Estado']) {
-        c.cidade = c['Cidade - Estado'];
-        delete c['Cidade - Estado'];
+    const labels = (c.avaliacoes || []).map(a => a.data);
+    const pontos = (c.avaliacoes || []).map(a => a.pontuacao);
+
+    chartRef = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Pontuação',
+          data: pontos,
+          tension: 0.4,
+          borderWidth: 3,
+          borderColor: '#d4af37',
+          backgroundColor: 'rgba(212,175,55,0.2)',
+          fill: true,
+          pointRadius: 5,
+          pointHoverRadius: 7
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true, ticks: { stepSize: 2 } } }
       }
-
-      c.id         = String(c.id ?? c.email ?? c.contato ?? cryptoId());
-      c.avaliacoes = Array.isArray(c.avaliacoes) ? c.avaliacoes : [];
-
-      // snapshot completo das respostas: remove funções/undefined
-      const snap = {};
-      for (const [k,v] of Object.entries(raw)) {
-        if (typeof v !== 'function' && v !== undefined) snap[k] = v;
-      }
-      c._sheet = snap; // <- aqui ficam todas as perguntas/respostas
-
-      return c;
     });
 
-    this.state.clientes = norm;
-    this.persist();
-  },
+    // copiar lista / JSON
+    const copy = (id) => {
+      const ta = document.getElementById(id);
+      ta.select(); ta.setSelectionRange(0, ta.value.length);
+      document.execCommand('copy');
+    };
+    const btnL = document.getElementById('copyListaBtn');
+    const btnJ = document.getElementById('copyJsonBtn');
+    if (btnL) btnL.addEventListener('click', ()=> copy('__copy_lista__'));
+    if (btnJ) btnJ.addEventListener('click', ()=> copy('__copy_json__'));
 
-  async reloadFromSheets(){ await this.init(); },
-
-  persist(){ localStorage.setItem(KEY, JSON.stringify(this.state.clientes)); },
-
-  list(){
-    const { q='', nivel='', status='' } = this.state.filters || {};
-    return [...this.state.clientes]
-      .sort((a,b)=> (a.nome||'').localeCompare(b.nome||'','pt',{sensitivity:'base'}))
-      .filter(c => !q     || (c.nome||'').toLowerCase().includes(q.toLowerCase()))
-      .filter(c => !nivel || c.nivel === nivel)
-      .filter(c => !status|| statusCalc(c).label === status);
-  },
-
-  byId(id){ return this.state.clientes.find(c => String(c.id) === String(id)); },
-
-  upsert(c){
-    const i = this.state.clientes.findIndex(x => String(x.id) === String(c.id));
-    if (i >= 0) this.state.clientes[i] = c; else this.state.clientes.push(c);
-    this.persist();
-  },
-
-  exportJSON(){
-    const blob = new Blob([JSON.stringify(this.state.clientes, null, 2)], { type:'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `clientes-${todayISO()}.json`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  },
-
-  async importJSON(file){
-    const text = await file.text();
-    const incoming = JSON.parse(text);
-    const map = new Map(this.state.clientes.map(c => [String(c.id), c]));
-    for (const nc of incoming){
-      const id = String(nc.id);
-      if (map.has(id)){
-        const base = map.get(id);
-        const avs  = [...(base.avaliacoes||[]), ...(nc.avaliacoes||[])];
-        const seen = new Set(); const dedup = [];
-        for (const a of avs){
-          const key = `${a.data}|${a.pontuacao}`;
-          if (!seen.has(key)) { seen.add(key); dedup.push(a); }
-        }
-        map.set(id, { ...base, ...nc, avaliacoes: dedup.sort((a,b)=> a.data.localeCompare(b.data)) });
-      } else {
-        map.set(id, nc);
-      }
-    }
-    this.state.clientes = [...map.values()];
-    this.persist();
+    // nova avaliação
+    const btn = document.getElementById('novaAvaliacaoBtn');
+    if (btn) btn.addEventListener('click', () => { location.hash = `#/avaliacao/${id}`; });
   }
 };
 
-function cryptoId(){
-  try { return crypto.randomUUID(); }
-  catch { return 'id_' + Math.random().toString(36).slice(2,9); }
-}
+// ================= helpers =================
 
-// --- Status ---
-export function statusCalc(c){
-  const renov = c.renovacaoDias ?? 30;
-  const hoje  = todayISO();
-  const dias  = renov - (diffDays(hoje, c.ultimoTreino || hoje));
-  if (dias >= 10) return { label:'Ativa',           klass:'st-ok'   };
-  if (dias >= 3)  return { label:'Perto de vencer', klass:'st-warn' };
-  if (dias >= 0)  return { label:'Vence em breve',  klass:'st-soon' };
-  return            { label:'Vencida',              klass:'st-bad'  };
-}
+function buildAnswerBlocks(c){
+  // Campos “internos” que não queremos repetir na lista longa
+  const internos = new Set([
+    'id','nome','contato','email','cidade','nivel','pontuacao','ultimoTreino',
+    'objetivo','avaliacoes','renovacaoDias'
+  ]);
 
-// --- Router (abre direto no painel) ---
-const idRe = '([\\w\\-+.@=]+)';
-const routes = [
-  { path: new RegExp('^#\\/$'),                         view: DashboardView },
-  { path: new RegExp('^#\\/cliente\\/' + idRe + '$'),   view: ClienteView   },
-  { path: new RegExp('^#\\/avaliacao\\/' + idRe + '$'), view: AvaliacaoView },
-];
-
-async function render(){
-  const app  = document.getElementById('app');
-  const hash = location.hash;
-
-  let View = DashboardView, params = [];
-  if (hash && hash !== '#' && hash !== '#/'){
-    const match = routes.find(r => r.path.test(hash));
-    if (!match){ app.innerHTML = '<div class="card"><h2>404</h2></div>'; return; }
-    params = match.path.exec(hash).slice(1);
-    View   = match.view;
+  const pares = [];
+  for (const [k, v] of Object.entries(c)){
+    if (internos.has(k)) continue;
+    if (v === '' || v === null || v === undefined) continue;
+    // arrays/objetos diferentes de string/number/boolean viram JSON compacto
+    const isPrim = (x) => ['string','number','boolean'].includes(typeof x);
+    const val = isPrim(v) ? v : JSON.stringify(v);
+    pares.push([k, String(val)]);
   }
-  app.innerHTML = await View.template(...params);
-  if (View.init) await View.init(...params);
+
+  // também mostrar os principais, lá no topo já saem, mas incluímos aqui se desejar
+  // (deixe comentado; a seção superior já mostra)
+  // pares.unshift(['nome', c.nome||'']);
+
+  const linhasTexto = pares.map(([k,v])=> `${k}: ${v}`).join('\n');
+  const jsonStr     = JSON.stringify(c, null, 2);
+
+  return { pares, linhasTexto, jsonStr };
 }
 
-window.addEventListener('hashchange', render);
-
-(async () => {
-  await Store.init();
-  await render(); // dashboard por padrão
-})();
+function escapeHTML(s){
+  return String(s || '').replace(/[&<>"']/g, m =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+}
