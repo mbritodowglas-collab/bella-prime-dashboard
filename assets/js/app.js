@@ -1,14 +1,13 @@
 // =====================================
-// BELLA PRIME · APP PRINCIPAL (default no painel + normalização Sheets)
+// BELLA PRIME · APP PRINCIPAL (default no painel, com todas as colunas do Sheets)
 // =====================================
 
-import { DashboardView } from './views/dashboardview.js';
-import { ClienteView }   from './views/clienteview.js';
-import { AvaliacaoView } from './views/avaliacaoview.js';
+import { DashboardView } from './views/dashboardview.js?v=3';
+import { ClienteView }   from './views/clienteview.js?v=3';
+import { AvaliacaoView } from './views/avaliacaoview.js?v=3';
 
-const SHEETS_API = 'https://script.google.com/macros/s/AKfycbyAafbpJDWr4RF9hdTkzmnLLv1Ge258hk6jlnDo7ng2kk88GoWyJzp63rHZPMDJA-wy/exec';
+const SHEETS_API = 'https://script.google.com/macros/s/AKfycbwsOtURP_fuMDzfxysaeVITPZkl2GfRXfz7io9plgAFsgbpScIZGzVTHaRfWPepZv26/exec';
 
-// ---------- Datas ----------
 const todayISO = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -16,36 +15,22 @@ const todayISO = () => {
 const parseISO = (s) => new Date(`${s}T12:00:00`);
 const diffDays  = (a,b)=> Math.floor((parseISO(a)-parseISO(b))/(1000*60*60*24));
 
-// ---------- Utils ----------
-function cryptoId(){
-  try { return crypto.randomUUID(); }
-  catch { return 'id_' + Math.random().toString(36).slice(2,9); }
-}
-const strip = (s='') => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
-const pick = (obj, keys) => {
-  for (const k of keys) if (obj[k] !== undefined && obj[k] !== '') return obj[k];
-  return undefined;
-};
-
-// ---------- Dados (Sheets -> seed.json) ----------
+// --- Dados (Sheets -> seed.json) ---
 async function loadSeed(){
   try{
     const r = await fetch(SHEETS_API, { cache:'no-store' });
     if(!r.ok) throw new Error(`Sheets HTTP ${r.status}`);
     const data = await r.json();
     if(!Array.isArray(data)) throw new Error('Sheets retornou formato inválido');
-    console.log('Sheets OK:', data.length);
     return data;
   }catch(e){
     console.warn('Sheets falhou, usando seed.json:', e);
     const r2 = await fetch('./assets/data/seed.json', { cache:'no-store' });
-    const data = await r2.json();
-    console.log('seed.json:', Array.isArray(data) ? data.length : 0);
-    return data;
+    return await r2.json();
   }
 }
 
-// ---------- Store ----------
+// --- Store ---
 const KEY = 'bp_clientes_v1';
 
 export const Store = {
@@ -56,121 +41,35 @@ export const Store = {
   },
 
   async init(){
-    try{
-      const brutos = await loadSeed();
+    const dados = await loadSeed();
 
-      // 1) normaliza chaves (case/acentos) por linha
-      const normRow = (raw) => {
-        const o = {};
-        for (const [k, v] of Object.entries(raw || {})) o[strip(k)] = v;
-        return o;
-      };
+    // Mantém TODAS as colunas originais em _sheet (para consulta)
+    const norm = (dados || []).map(raw => {
+      const c = { ...raw };
 
-      // 2) transforma cada linha em um "registro base" com avaliação opcional
-      const registros = (brutos || []).map(raw => {
-        const o = normRow(raw);
-
-        // nome: cobre "Nome completo" e variações comuns do Forms
-        const nome = pick(o, [
-          'nome','nome completo','seu nome','qual e o seu nome','qual seu nome',
-          'aluna','cliente','paciente'
-        ]);
-
-        const contato = pick(o, ['contato','whatsapp','whats','telefone']);
-        const email   = pick(o, ['email','e-mail','mail']);
-        const id      = String(pick(o, ['id','identificador','uid','usuario']) || contato || email || cryptoId());
-
-        // Aceita várias formas de "Cidade - Estado"
-        const cidade = pick(o, [
-          'cidade-estado','cidade - estado','cidade/estado','cidade_estado',
-          'cidade-uf','cidade uf','cidadeuf','cidade'
-        ]) || '';
-
-        // Campos de avaliação (data / pontuação / nível)
-        const dataAval = pick(o, ['data','dataavaliacao','data da avaliacao','ultimotreino','ultimaavaliacao']);
-        const pont     = Number(pick(o, ['pontuacao','pontuação','score','pontos','nota']) || 0);
-        const nivelIn  = pick(o, ['nivel','nível','nivelatual','fase','faixa']);
-
-        // normaliza nível
-        const nivel = (() => {
-          const n = strip(nivelIn || '');
-          if (n.startsWith('fund')) return 'Fundação';
-          if (n.startsWith('asc'))  return 'Ascensão';
-          if (n.startsWith('dom'))  return 'Domínio';
-          if (n.startsWith('over')) return 'OverPrime';
-          if (pont <= 2)  return 'Fundação';
-          if (pont <= 6)  return 'Ascensão';
-          if (pont <= 10) return 'Domínio';
-          return 'Domínio';
-        })();
-
-        const ultimoTreino = pick(o, ['ultimotreino','ultimaavaliacao','dataavaliacao','data']) || undefined;
-
-        const base = {
-          id,
-          nome: nome || '(Sem nome)',
-          contato: contato || '',
-          email: email || '',
-          cidade,
-          nivel,
-          pontuacao: isNaN(pont) ? 0 : pont,
-          ultimoTreino: ultimoTreino || undefined,
-          renovacaoDias: Number(pick(o,['renovacaodias','renovacao','ciclodias'])) || 30,
-          avaliacoes: []
-        };
-
-        // se existir avaliação nesta linha, adiciona
-        if (dataAval || !isNaN(pont)) {
-          const dataISO = (dataAval && /^\d{4}-\d{2}-\d{2}$/.test(String(dataAval))) ? String(dataAval) : todayISO();
-          base.avaliacoes.push({ data: dataISO, pontuacao: isNaN(pont) ? 0 : pont, nivel });
-          base.ultimoTreino = base.ultimoTreino || dataISO;
-          base.pontuacao    = isNaN(pont) ? base.pontuacao : pont;
-        }
-
-        return base;
-      });
-
-      // 3) colapsa por id, mesclando históricos (dedup)
-      const map = new Map();
-      for (const r of registros) {
-        if (!map.has(r.id)) { map.set(r.id, r); continue; }
-        const dst = map.get(r.id);
-
-        // completa cadastro
-        for (const f of ['nome','contato','email','cidade','nivel','pontuacao','ultimoTreino','renovacaoDias']) {
-          if (!dst[f] && r[f]) dst[f] = r[f];
-        }
-
-        // mescla avaliações
-        const avs = [...(dst.avaliacoes||[]), ...(r.avaliacoes||[])];
-        const seen = new Set(); const dedup = [];
-        for (const a of avs) {
-          const key = `${a.data}|${a.pontuacao}`;
-          if (!seen.has(key)) { seen.add(key); dedup.push(a); }
-        }
-        dedup.sort((a,b)=> a.data.localeCompare(b.data));
-        dst.avaliacoes = dedup;
-
-        const last = dedup[dedup.length-1];
-        if (last) {
-          dst.pontuacao    = last.pontuacao;
-          dst.nivel        = last.nivel || dst.nivel;
-          dst.ultimoTreino = dst.ultimoTreino || last.data;
-        }
+      if (!c.cidade && c['Cidade - Estado']) {
+        c.cidade = c['Cidade - Estado'];
+        delete c['Cidade - Estado'];
       }
 
-      this.state.clientes = [...map.values()];
-      this.persist();
-      console.log(`✅ Normalizado: ${this.state.clientes.length} clientes`);
-    }catch(e){
-      console.error('Falha init()', e);
-      this.state.clientes = [];
-    }
+      c.id         = String(c.id ?? c.email ?? c.contato ?? cryptoId());
+      c.avaliacoes = Array.isArray(c.avaliacoes) ? c.avaliacoes : [];
+
+      // snapshot completo das respostas: remove funções/undefined
+      const snap = {};
+      for (const [k,v] of Object.entries(raw)) {
+        if (typeof v !== 'function' && v !== undefined) snap[k] = v;
+      }
+      c._sheet = snap; // <- aqui ficam todas as perguntas/respostas
+
+      return c;
+    });
+
+    this.state.clientes = norm;
+    this.persist();
   },
 
-  async reloadFromSheets(){
-    await this.init();
-  },
+  async reloadFromSheets(){ await this.init(); },
 
   persist(){ localStorage.setItem(KEY, JSON.stringify(this.state.clientes)); },
 
@@ -224,7 +123,12 @@ export const Store = {
   }
 };
 
-// ---------- Status ----------
+function cryptoId(){
+  try { return crypto.randomUUID(); }
+  catch { return 'id_' + Math.random().toString(36).slice(2,9); }
+}
+
+// --- Status ---
 export function statusCalc(c){
   const renov = c.renovacaoDias ?? 30;
   const hoje  = todayISO();
@@ -235,7 +139,7 @@ export function statusCalc(c){
   return            { label:'Vencida',              klass:'st-bad'  };
 }
 
-// ---------- Router (abre direto no painel) ----------
+// --- Router (abre direto no painel) ---
 const idRe = '([\\w\\-+.@=]+)';
 const routes = [
   { path: new RegExp('^#\\/$'),                         view: DashboardView },
@@ -260,8 +164,7 @@ async function render(){
 
 window.addEventListener('hashchange', render);
 
-// ---------- Boot ----------
 (async () => {
   await Store.init();
-  await render(); // default: dashboard
+  await render(); // dashboard por padrão
 })();
