@@ -105,6 +105,7 @@ export const ClienteView = {
         ${c.contato ? `<p><b>WhatsApp:</b> ${escapeHTML(c.contato)}</p>` : ''}
         <div class="row" style="gap:10px;margin-top:12px">
           ${ctaProfessor}
+          <a class="btn btn-outline" href="#/relatorio/${c.id}">🧾 Relatório (A4)</a> <!-- ADD -->
         </div>
       </section>
 
