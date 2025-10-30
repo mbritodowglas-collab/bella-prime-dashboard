@@ -5,13 +5,17 @@
 import { DashboardView } from './views/dashboardview.js';
 import { ClienteView }   from './views/clienteview.js';
 import { AvaliacaoView } from './views/avaliacaoview.js';
-import { TreinoView }    from './views/treinoview.js'; // <<< NOVO
+import { TreinoView }    from './views/treinoview.js';
+import { RelatorioView } from './views/relatorioview.js'; // PDF + gráficos
 
 const SHEETS_API = 'https://script.google.com/macros/s/AKfycbyAafbpJDWr4RF9hdTkzmnLLv1Ge258hk6jlnDo7ng2kk88GoWyJzp63rHZPMDJA-wy/exec';
 
-// Se quiser pré-preencher o Form do Professor, coloque aqui a URL base (Google Forms)
-// Ex.: const PROFESSOR_FORM_URL = 'https://docs.google.com/forms/d/e/XXXX/viewform';
-export const PROFESSOR_FORM_URL = ''; // ← preencha quando tiver o link
+// ---- Configurações de integrações/branding ----
+export const PROFESSOR_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLScvQBCSEVdTspYgelGI0zWbrK21ttO1IUKuf9_j5rO_a2czfA/viewform?usp=header';
+
+// Logo em PNG usada pelo relatório
+export const RELATORIO_LOGO_PNG = './assets/img/logo-mdpersonal.png';
+export const BRAND_NAME = 'Márcio Dowglas Trainer';
 
 // ---------- Datas ----------
 const todayISO = () => {
@@ -53,12 +57,12 @@ function collectAnswersFromRaw(raw){
     'pontuacao','pontuação','score','pontos','nota',
     'ultimotreino','ultimaavaliacao','dataavaliacao','data',
     'renovacaodias','renovacao','ciclodias',
-    // métricas que já extraímos separadamente
+    // métricas extraídas separadamente
     'peso','peso (kg)','peso kg',
     'cintura','cintura (cm)','cintura cm',
     'quadril','quadril (cm)','quadril cm',
-    // campos do form do professor (não entram no _answers)
-    'novo_nivel','novonivel','nivel_novo','nivel aprovado','nivel_aprovado',
+    // campos do form do professor
+    'novo_nivel','novonivel','nivel_novo','nivel aprovado','nivel_aprovado','nivel_definido',
     'aprovado','aprovacao','aprovação','aprovacao_professor','ok','apto','apta',
     'data_decisao','data_upgrade','data_mudanca','data da decisao',
     'observacao_professor','observacao','comentario'
@@ -80,13 +84,11 @@ async function loadSeed(){
     if(!r.ok) throw new Error(`Sheets HTTP ${r.status}`);
     const data = await r.json();
     if(!Array.isArray(data)) throw new Error('Sheets retornou formato inválido');
-    console.log('Sheets OK:', data.length);
     return data;
   }catch(e){
     console.warn('Sheets falhou, usando seed.json:', e);
     const r2 = await fetch('./assets/data/seed.json', { cache:'no-store' });
     const data = await r2.json();
-    console.log('seed.json:', Array.isArray(data) ? data.length : 0);
     return data;
   }
 }
@@ -141,7 +143,7 @@ export const Store = {
         const quadril = (quadrilRaw !== undefined && quadrilRaw !== '') ? Number(String(quadrilRaw).replace(',', '.')) : undefined;
         const rcq = (cintura && quadril && quadril !== 0) ? (cintura / quadril) : undefined;
 
-        // nível default (mantém tua lógica base)
+        // nível default (fallback)
         const nivelDefault = (() => {
           const n = strip(nivelIn || '');
           if (n.startsWith('fund')) return 'Fundação';
@@ -164,11 +166,11 @@ export const Store = {
           ultimoTreino: dataAval || undefined,
           renovacaoDias: Number(pick(o,['renovacaodias','renovacao','ciclodias'])) || 30,
           avaliacoes: [],
-          treinos: [], // histórico de treinos lançados
+          treinos: [],
           _answers: collectAnswersFromRaw(raw)
         };
 
-        // --- Detecta linha do Formulário do Professor (upgrade de nível) ---
+        // --- Upgrade de nível (form do professor) ---
         const novoNivelRaw = pick(o, [
           'novo_nivel','novonivel','nivel_novo','nivel aprovado','nivel_aprovado','nivel_definido'
         ]);
@@ -185,25 +187,25 @@ export const Store = {
           base._upgradeEvent = { aprovado, novoNivel, data: dataUp, obs: obsProf || '' };
         }
 
-        // --- Pontuação automática por respostas (fallback se não há nota explícita) ---
+        // --- Pontuação automática por respostas (fallback)
         if ((!pontForm || isNaN(pontForm)) && base._answers && Object.keys(base._answers).length){
           const auto = calcularPontuacao(base._answers);
           base.pontuacao = auto;
           base.nivel = nivelPorPontuacao(auto);
         }
 
-        // adiciona avaliação com métricas + parecer (sempre que houver algo)
+        // adiciona avaliação com métricas
         if (dataAval || !isNaN(base.pontuacao) || peso !== undefined || cintura !== undefined || quadril !== undefined) {
           const dataISO = /^\d{4}-\d{2}-\d{2}$/.test(String(dataAval)) ? String(dataAval) : todayISO();
           const sugestaoNivel = nivelPorPontuacao(base.pontuacao);
-          const readiness = prontidaoPorPontuacao(base.pontuacao); // Pronta / Quase lá / Manter
+          const readiness = prontidaoPorPontuacao(base.pontuacao);
 
           base.avaliacoes.push({
             data: dataISO,
             pontuacao: isNaN(base.pontuacao) ? 0 : base.pontuacao,
-            nivel: base.nivel,               // nível atual (não muda na reavaliação)
-            sugestaoNivel,                   // sugerido pela pontuação
-            readiness,                       // status de prontidão
+            nivel: base.nivel,
+            sugestaoNivel,
+            readiness,
             peso: isNaN(peso) ? undefined : peso,
             cintura: isNaN(cintura) ? undefined : cintura,
             quadril: isNaN(quadril) ? undefined : quadril,
@@ -213,24 +215,21 @@ export const Store = {
         return base;
       });
 
-      // colapsa por id (mantém histórico)
+      // colapsa por id
       const map = new Map();
       for (const r of registros) {
         if (!map.has(r.id)) { map.set(r.id, r); continue; }
         const dst = map.get(r.id);
         for (const f of ['nome','contato','email','cidade']) if (!dst[f] && r[f]) dst[f] = r[f];
         dst.avaliacoes = [...(dst.avaliacoes||[]), ...(r.avaliacoes||[])];
-        if (!Array.isArray(dst.treinos)) dst.treinos = []; // garante array
-
-        // acumula upgrades do professor
+        if (!Array.isArray(dst.treinos)) dst.treinos = [];
         if (r._upgradeEvent) {
           if (!Array.isArray(dst._allUpgrades)) dst._allUpgrades = [];
           dst._allUpgrades.push(r._upgradeEvent);
         }
-        // não sobrescreve _answers; mantém o primeiro
       }
 
-      // ordena histórico por data + calcula prontidão consecutiva e elegibilidade
+      // ordena e computa derivados
       const list = [...map.values()];
       for (const c of list) {
         if (Array.isArray(c.avaliacoes)) {
@@ -238,21 +237,18 @@ export const Store = {
           const last = c.avaliacoes[c.avaliacoes.length-1];
           if (last) {
             c.pontuacao    = (typeof last.pontuacao === 'number') ? last.pontuacao : c.pontuacao;
-            // OBS: nível permanece o atual por reavaliação
             c.ultimoTreino = c.ultimoTreino || last.data;
             c.sugestaoNivel = last.sugestaoNivel;
             c.readiness = last.readiness;
           }
-
-          // conta consecutivas "Pronta para subir"
           c.prontaConsecutivas = contarProntasSeguidas(c.avaliacoes);
           c.elegivelPromocao   = c.prontaConsecutivas >= 2;
         }
 
-        // aplica último upgrade aprovado do professor (se houver)
+        // aplica último upgrade aprovado
         const ups = (c._allUpgrades || []).filter(u => u && u.aprovado);
         if (ups.length){
-          ups.sort((a,b)=> (a.data||'').localeCompare(b.data||'')); // mais antigo -> mais novo
+          ups.sort((a,b)=> (a.data||'').localeCompare(b.data||''));
           const lastUp = ups[ups.length-1];
           if (lastUp.novoNivel){
             c.nivel = normNivel(lastUp.novoNivel) || lastUp.novoNivel;
@@ -304,18 +300,18 @@ export function statusCalc(c){
   return            { label:'Vencida',              klass:'st-bad'  };
 }
 
-// ---------- Programas permitidos por nível ----------
+// ---------- Programas por nível ----------
 export function programsByLevel(nivel){
   switch (nivel) {
-    case 'Fundação': return ['ABC','ABCD'];                 // requisito
-    case 'Ascensão': return ['ABC','ABCD'];                 // pode abrir depois
+    case 'Fundação': return ['ABC','ABCD'];
+    case 'Ascensão': return ['ABC','ABCD'];
     case 'Domínio' : return ['ABC','ABCD','ABCDE','ABCDEF'];
     case 'OverPrime': return ['ABC','ABCD','ABCDE','ABCDEF'];
     default: return ['ABC','ABCD'];
   }
 }
 
-// ---------- Intensidades (para Domínio/OverPrime) ----------
+// ---------- Intensidades (Domínio/OverPrime) ----------
 const INTENSIDADES_AVANCADAS = [
   'Base Intermediária (≈65–70%)',
   'Densidade / Hipertrofia (≈70–75%)',
@@ -328,13 +324,12 @@ export function intensitiesByLevel(nivel){
   if (String(nivel).startsWith('Dom') || String(nivel).startsWith('Over')) {
     return INTENSIDADES_AVANCADAS.slice();
   }
-  return null; // níveis iniciais não pedem intensidade
+  return null;
 }
 
 // ---------- Pontuação/Nível/Prontidão ----------
 export function calcularPontuacao(respostas) {
   if (!respostas || typeof respostas !== 'object') return 0;
-
   const criterios = [
     { chave: /execu[cç][aã]o|t[ée]cnica|movimento|postura/i, bom: ['boa','correta','excelente','sem dificuldade'], ruim: ['ruim','errada','muita dificuldade'], peso: 1 },
     { chave: /frequ[êe]ncia|dias por semana|quantas vezes/i, bom: ['4','5','6','7'], ruim: ['0','1','2','nenhum','rara'], peso: 1 },
@@ -344,9 +339,7 @@ export function calcularPontuacao(respostas) {
     { chave: /tempo de treino|treina h[aá]|experi[êe]ncia/i, bom: ['1 ano','2 anos','3 anos','mais de','> 1'], ruim: ['iniciante','come[çc]ando','< 3 meses'], peso: 1 },
     { chave: /const[âa]ncia|disciplina|motiva[cç][aã]o/i, bom: ['alta','boa','constante'], ruim: ['baixa','oscilante'], peso: 0.5 }
   ];
-
   let score = 0;
-
   for (const [pergunta, resposta] of Object.entries(respostas)) {
     for (const c of criterios) {
       if (c.chave.test(pergunta)) {
@@ -356,13 +349,12 @@ export function calcularPontuacao(respostas) {
       }
     }
   }
-
   score = Math.max(0, Math.min(9, score));
   return score;
 }
 
 export function nivelPorPontuacao(score) {
-  // Faixas acordadas: ≤3.5 Fundação | 3.6–5.9 Ascensão | ≥6 Domínio
+  // ≤3.5 Fundação | 3.6–5.9 Ascensão | ≥6 Domínio
   if (score <= 3.5) return 'Fundação';
   if (score <= 5.9) return 'Ascensão';
   return 'Domínio';
@@ -390,7 +382,8 @@ const routes = [
   { path: new RegExp('^#\\/$'),                         view: DashboardView },
   { path: new RegExp('^#\\/cliente\\/' + idRe + '$'),   view: ClienteView   },
   { path: new RegExp('^#\\/avaliacao\\/' + idRe + '$'), view: AvaliacaoView },
-  { path: new RegExp('^#\\/treino\\/' + idRe + '\\/novo$'), view: TreinoView }, // <<< NOVO
+  { path: new RegExp('^#\\/treino\\/' + idRe + '\\/novo$'), view: TreinoView },
+  { path: new RegExp('^#\\/relatorio\\/' + idRe + '$'), view: RelatorioView },
 ];
 
 async function render(){
