@@ -111,18 +111,8 @@ export const Store = {
 
         // Avaliação base (data/nivel/pontuacao)
         const dataAval = pick(o, ['data','dataavaliacao','ultimotreino']);
-        const pont     = Number(pick(o, ['pontuacao','pontuação','score','nota']) || 0);
+        const pontForm = Number(pick(o, ['pontuacao','pontuação','score','nota']) || 0);
         const nivelIn  = pick(o, ['nivel','nível','fase','faixa']);
-        const nivel = (() => {
-          const n = strip(nivelIn || '');
-          if (n.startsWith('fund')) return 'Fundação';
-          if (n.startsWith('asc'))  return 'Ascensão';
-          if (n.startsWith('dom'))  return 'Domínio';
-          if (n.startsWith('over')) return 'OverPrime';
-          if (pont <= 2)  return 'Fundação';
-          if (pont <= 6)  return 'Ascensão';
-          return 'Domínio';
-        })();
 
         // ---- MÉTRICAS ANTROPOMÉTRICAS ----
         const pesoRaw    = pick(o, ['peso','peso (kg)','peso kg']);
@@ -134,14 +124,26 @@ export const Store = {
         const quadril = (quadrilRaw !== undefined && quadrilRaw !== '') ? Number(String(quadrilRaw).replace(',', '.')) : undefined;
         const rcq = (cintura && quadril && quadril !== 0) ? (cintura / quadril) : undefined;
 
+        // nível default (mantém tua lógica base)
+        const nivelDefault = (() => {
+          const n = strip(nivelIn || '');
+          if (n.startsWith('fund')) return 'Fundação';
+          if (n.startsWith('asc'))  return 'Ascensão';
+          if (n.startsWith('dom'))  return 'Domínio';
+          if (n.startsWith('over')) return 'OverPrime';
+          if (pontForm <= 2)  return 'Fundação';
+          if (pontForm <= 6)  return 'Ascensão';
+          return 'Domínio';
+        })();
+
         const base = {
           id,
           nome: nome || '(Sem nome)',
           contato: contato || '',
           email: email || '',
           cidade,
-          nivel,
-          pontuacao: isNaN(pont) ? 0 : pont,
+          nivel: nivelDefault,
+          pontuacao: isNaN(pontForm) ? 0 : pontForm,
           ultimoTreino: dataAval || undefined,
           renovacaoDias: Number(pick(o,['renovacaodias','renovacao','ciclodias'])) || 30,
           avaliacoes: [],
@@ -149,13 +151,20 @@ export const Store = {
           _answers: collectAnswersFromRaw(raw)
         };
 
+        // --- Pontuação automática por respostas (só se não houver nota explícita no form) ---
+        if ((!pontForm || isNaN(pontForm)) && base._answers && Object.keys(base._answers).length){
+          const auto = calcularPontuacao(base._answers);
+          base.pontuacao = auto;
+          base.nivel = nivelPorPontuacao(auto);
+        }
+
         // adiciona avaliação com métricas, se houver algo
-        if (dataAval || !isNaN(pont) || peso !== undefined || cintura !== undefined || quadril !== undefined) {
+        if (dataAval || !isNaN(base.pontuacao) || peso !== undefined || cintura !== undefined || quadril !== undefined) {
           const dataISO = /^\d{4}-\d{2}-\d{2}$/.test(String(dataAval)) ? String(dataAval) : todayISO();
           base.avaliacoes.push({
             data: dataISO,
-            pontuacao: isNaN(pont) ? 0 : pont,
-            nivel,
+            pontuacao: isNaN(base.pontuacao) ? 0 : base.pontuacao,
+            nivel: base.nivel,
             peso: isNaN(peso) ? undefined : peso,
             cintura: isNaN(cintura) ? undefined : cintura,
             quadril: isNaN(quadril) ? undefined : quadril,
@@ -287,3 +296,57 @@ window.addEventListener('hashchange', render);
   await Store.init();
   await render();
 })();
+
+// ===============================
+// PONTUAÇÃO EVOLUÍDA · Bella Prime
+// ===============================
+export function calcularPontuacao(respostas) {
+  if (!respostas || typeof respostas !== 'object') return 0;
+
+  // Critérios enxutos (palavras-chave por pergunta; pesos positivos/negativos)
+  const criterios = [
+    // Execução / Técnica
+    { chave: /execu[cç][aã]o|t[ée]cnica|movimento|postura/i, bom: ['boa','correta','excelente','sem dificuldade'], ruim: ['ruim','errada','muita dificuldade'], peso: 1 },
+
+    // Frequência semanal
+    { chave: /frequ[êe]ncia|dias por semana|quantas vezes/i, bom: ['4','5','6','7'], ruim: ['0','1','2','nenhum','rara'], peso: 1 },
+
+    // Dor / Lesão recorrente
+    { chave: /dor|les[aã]o|limita[cç][aã]o|tendinite|condromalacia|condromal[áa]cia|lombar|joelho|ombro/i, bom: ['nenhuma','não','nao','controlada'], ruim: ['sim','frequente','constante'], peso: -1 },
+
+    // Sono
+    { chave: /sono/i, bom: ['bom','regular','7','8','9'], ruim: ['ruim','ins[ôo]nia','5','4','3'], peso: 1 },
+
+    // Alimentação / Organização
+    { chave: /alimenta[cç][aã]o|dieta|nutri/i, bom: ['equilibrada','organizada','planejada','acompanha'], ruim: ['desorganizada','ruim','pula','lanches'], peso: 1 },
+
+    // Tempo de prática
+    { chave: /tempo de treino|treina h[aá]|experi[êe]ncia/i, bom: ['1 ano','2 anos','3 anos','mais de','> 1'], ruim: ['iniciante','come[çc]ando','< 3 meses'], peso: 1 },
+
+    // Constância / Motivação
+    { chave: /const[âa]ncia|disciplina|motiva[cç][aã]o/i, bom: ['alta','boa','constante'], ruim: ['baixa','oscilante'], peso: 0.5 }
+  ];
+
+  let score = 0;
+
+  for (const [pergunta, resposta] of Object.entries(respostas)) {
+    for (const c of criterios) {
+      if (c.chave.test(pergunta)) {
+        const texto = String(resposta).toLowerCase();
+        if (c.bom.some(b => texto.includes(b))) score += c.peso;
+        else if (c.ruim && c.ruim.some(r => texto.includes(r))) score -= Math.abs(c.peso);
+      }
+    }
+  }
+
+  // Limita o score entre 0 e 9 (faixa-alvo dos teus níveis)
+  score = Math.max(0, Math.min(9, score));
+  return score;
+}
+
+export function nivelPorPontuacao(score) {
+  // Faixas acordadas: ≤3.5 Fundação | 3.6–5.9 Ascensão | ≥6 Domínio
+  if (score <= 3.5) return 'Fundação';
+  if (score <= 5.9) return 'Ascensão';
+  return 'Domínio';
+}
