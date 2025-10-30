@@ -1,25 +1,52 @@
 // ================================
 // VIEW: Relatório da Cliente (A4/print)
 // ================================
-import { Store, RELATORIO_LOGO_PNG, BRAND_NAME } from '../app.js';
+import { Store } from '../app.js';
+
+// Fallbacks de branding (caso app.js não exporte constantes)
+// Você pode definir window.BP_BRAND_NAME e window.BP_BRAND_LOGO_PNG se preferir.
+const BRAND_NAME_FALLBACK = (typeof window !== 'undefined' && window.BP_BRAND_NAME) || 'Bella Prime';
+const LOGO_PNG_FALLBACK   = (typeof window !== 'undefined' && window.BP_BRAND_LOGO_PNG) || './assets/img/logo-mdpersonal.png';
 
 export const RelatorioView = {
   async template(id){
     const c = Store.byId(id);
     if (!c) return `<section class="card"><h2>Cliente não encontrada</h2></section>`;
 
+    // pega última avaliação
     const ultimaAval = (c.avaliacoes||[])
       .slice()
       .sort((a,b)=>(a.data||'').localeCompare(b.data||''))
       .pop() || {};
 
+    // normaliza treinos p/ as 2 nomenclaturas e ordena
     const treinos = (c.treinos||[])
       .slice()
+      .map(t => ({
+        id: t.id,
+        programa: t.programa || '-',
+        data_inicio: t.data_inicio || t.inicio || '',
+        data_venc:   t.data_venc   || t.vencimento || '',
+        observacao:  t.observacao  || t.obs || '',
+        plano_texto: t.plano_texto || t.plano || '',
+        intensidades: Array.isArray(t.intensidades) ? t.intensidades
+                      : (t.intensidade ? [t.intensidade] : [])
+      }))
       .sort((a,b)=>(b.data_inicio||'').localeCompare(a.data_inicio||''));
 
     const planoMaisRecente = treinos.length ? (treinos[0].plano_texto || '') : '';
     const hoje = new Date();
     const ts   = `${hoje.toLocaleDateString('pt-BR')} ${hoje.toLocaleTimeString('pt-BR')}`;
+
+    // tenta puxar branding do app.js (se existir) sem quebrar
+    let BRAND_NAME = BRAND_NAME_FALLBACK;
+    let RELATORIO_LOGO_PNG = LOGO_PNG_FALLBACK;
+    try {
+      // import dinâmica opcional – se app.js exporta, ótimo; se não, ignora
+      const mod = await import('../app.js');
+      BRAND_NAME = mod.BRAND_NAME || BRAND_NAME;
+      RELATORIO_LOGO_PNG = mod.RELATORIO_LOGO_PNG || RELATORIO_LOGO_PNG;
+    } catch (_) { /* segue com fallbacks */ }
 
     return `
       <style>
@@ -35,14 +62,8 @@ export const RelatorioView = {
         .r-card{border:1px solid var(--border);border-radius:12px;padding:12px;background:rgba(255,255,255,.02)}
         .mono{white-space:pre-wrap;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace; line-height:1.4}
         .muted{opacity:.75}
-
-        /* Tabela compacta */
         .table th, .table td{padding:8px 10px}
-
-        /* Evita quebras feias no PDF */
         .avoid-break{page-break-inside:avoid}
-
-        /* Print */
         @media print{
           .r-actions{display:none !important}
           body{background:#fff}
@@ -59,7 +80,8 @@ export const RelatorioView = {
         </div>
 
         <div class="r-header">
-          <img id="brandLogo" src="${RELATORIO_LOGO_PNG}" alt="Logo" onerror="this.style.display='none';document.getElementById('brandText').style.display='block';" />
+          <img id="brandLogo" src="${RELATORIO_LOGO_PNG}" alt="Logo"
+               onerror="this.style.display='none';document.getElementById('brandText').style.display='block';" />
           <div>
             <div id="brandText" class="brand-text">${escapeHTML(BRAND_NAME||'')}</div>
             <h2 style="margin:2px 0 0">Relatório de Avaliação — ${escapeHTML(c.nome||'')}</h2>
@@ -98,7 +120,7 @@ export const RelatorioView = {
                   <tr>
                     <td>${escapeHTML(t.programa||'-')}</td>
                     <td>${t.data_inicio||'-'} → ${t.data_venc||'-'}</td>
-                    <td>${Array.isArray(t.intensidades) && t.intensidades.length ? escapeHTML(t.intensidades.join(' → ')) : '-'}</td>
+                    <td>${t.intensidades && t.intensidades.length ? escapeHTML(t.intensidades.join(' → ')) : '-'}</td>
                     <td>${escapeHTML(t.observacao||'')}</td>
                   </tr>
                 `).join('')}
@@ -112,7 +134,7 @@ export const RelatorioView = {
           ${planoMaisRecente ? `<div class="mono">${escapeHTML(planoMaisRecente)}</div>` : '<div class="muted">— sem plano anexado no último lançamento —</div>'}
         </div>
 
-        <div class="muted" style="margin-top:16px">© Bella Prime • Documento gerado automaticamente</div>
+        <div class="muted" style="margin-top:16px">© ${escapeHTML(BRAND_NAME)} • Documento gerado automaticamente</div>
       </div>
     `;
   },
