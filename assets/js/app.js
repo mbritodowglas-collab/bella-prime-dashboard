@@ -10,8 +10,7 @@ import { TreinoView }    from './views/treinoview.js'; // <<< NOVO
 const SHEETS_API = 'https://script.google.com/macros/s/AKfycbyAafbpJDWr4RF9hdTkzmnLLv1Ge258hk6jlnDo7ng2kk88GoWyJzp63rHZPMDJA-wy/exec';
 
 // Se quiser pré-preencher o Form do Professor, coloque aqui a URL base (Google Forms)
-// Ex.: const PROFESSOR_FORM_URL = 'https://docs.google.com/forms/d/e/XXXX/viewform';
-export const PROFESSOR_FORM_URL = ''; // ← preencha quando tiver o link
+export const PROFESSOR_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLScvQBCSEVdTspYgelGI0zWbrK21ttO1IUKuf9_j5rO_a2czfA/viewform?usp=header';
 
 // ---------- Datas ----------
 const todayISO = () => {
