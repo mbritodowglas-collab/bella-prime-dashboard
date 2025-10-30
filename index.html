@@ -16,10 +16,14 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet" />
 
-  <!-- Chart.js (para gráficos do dashboard) -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Chart.js (fixo em versão estável) -->
+  <script
+    src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"
+    integrity="sha384-7iS4S4n8qQ0qU9n0a6e4h6Z1q2GxE5r1x2uQ4q6U8zqQw2Ir9C1QOa9iYHqvQk6E"
+    crossorigin="anonymous">
+  </script>
 
-  <!-- Favicon (opcional) -->
+  <!-- Favicon -->
   <link rel="icon" href="./assets/img/favicon-32.png" />
 </head>
 <body>
@@ -46,24 +50,53 @@
   <!-- Monitor de erros simples (útil no GitHub Pages) -->
   <script>
     (function () {
+      let box = null;
       function show(msg) {
-        var box = document.createElement('pre');
-        box.style.cssText =
-          'position:fixed;left:0;bottom:0;width:100%;max-height:45vh;overflow:auto;' +
-          'background:#200;color:#f88;padding:10px;margin:0;z-index:9999;font:12px/1.4 monospace';
-        box.textContent = '⚠️ JS error: ' + msg;
-        document.body.appendChild(box);
+        if (!box) {
+          box = document.createElement('pre');
+          box.style.cssText =
+            'position:fixed;left:0;bottom:0;width:100%;max-height:45vh;overflow:auto;' +
+            'background:#200;color:#f88;padding:10px;margin:0;z-index:9999;font:12px/1.4 monospace';
+          document.body.appendChild(box);
+        }
+        const line = (msg && msg.stack) ? msg.stack : (msg && msg.message) ? msg.message : String(msg);
+        box.textContent = '⚠️ JS error:\n' + line;
       }
       window.addEventListener('error', function (e) {
-        show(e.message || (e.error && e.error.stack) || String(e.error || e));
+        show(e.error || e.message || e);
       });
       window.addEventListener('unhandledrejection', function (e) {
-        show((e.reason && e.reason.stack) || e.reason || 'unhandledrejection');
+        show(e.reason || 'unhandledrejection');
       });
     })();
   </script>
 
-  <!-- App principal (ES Modules) -->
-  <script type="module" src="./assets/js/app.js"></script>
+  <!-- Boot do App (ES Modules) -->
+  <script type="module">
+    // Defina isso quando publicar uma nova versão para forçar recarregar (cache-busting leve):
+    const APP_VERSION = '0.1.0';
+
+    // Verificação básica de suporte a modules
+    try {
+      // Sinaliza base (útil pro app.js montar paths relativos/worker)
+      window.__BP_BASE__ = location.pathname.replace(/\/[^/]*$/, '/');
+
+      // Carrega o app principal
+      import(`./assets/js/app.js?v=${encodeURIComponent(APP_VERSION)}`).catch(err => {
+        console.error('Falha ao carregar app.js', err);
+        const pre = document.createElement('pre');
+        pre.textContent = 'Falha ao carregar app.js\n' + (err && err.stack ? err.stack : err);
+        pre.style.cssText = 'white-space:pre-wrap;background:#220;color:#faa;padding:10px';
+        document.getElementById('app').prepend(pre);
+      });
+    } catch (e) {
+      const el = document.createElement('div');
+      el.innerHTML = `
+        <h2>Seu navegador não suporta ES Modules</h2>
+        <p>Tente atualizar o navegador. Este painel requer suporte moderno a JavaScript (ES6+).</p>
+      `;
+      document.getElementById('app').appendChild(el);
+    }
+  </script>
 </body>
 </html>
