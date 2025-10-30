@@ -16,10 +16,10 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet" />
 
-  <!-- Chart.js (versão estável e compatível com o app.js) -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <!-- Chart.js (para gráficos do dashboard) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-  <!-- Favicon -->
+  <!-- Favicon (opcional) -->
   <link rel="icon" href="./assets/img/favicon-32.png" />
 </head>
 <body>
@@ -46,42 +46,24 @@
   <!-- Monitor de erros simples (útil no GitHub Pages) -->
   <script>
     (function () {
-      let box = null;
       function show(msg) {
-        if (!box) {
-          box = document.createElement('pre');
-          box.style.cssText =
-            'position:fixed;left:0;bottom:0;width:100%;max-height:45vh;overflow:auto;' +
-            'background:#200;color:#f88;padding:10px;margin:0;z-index:9999;font:12px/1.4 monospace';
-          document.body.appendChild(box);
-        }
-        const line = (msg && msg.stack) ? msg.stack : (msg && msg.message) ? msg.message : String(msg);
-        box.textContent = '⚠️ JS error:\n' + line;
+        var box = document.createElement('pre');
+        box.style.cssText =
+          'position:fixed;left:0;bottom:0;width:100%;max-height:45vh;overflow:auto;' +
+          'background:#200;color:#f88;padding:10px;margin:0;z-index:9999;font:12px/1.4 monospace';
+        box.textContent = '⚠️ JS error: ' + msg;
+        document.body.appendChild(box);
       }
       window.addEventListener('error', function (e) {
-        show(e.error || e.message || e);
+        show(e.message || (e.error && e.error.stack) || String(e.error || e));
       });
       window.addEventListener('unhandledrejection', function (e) {
-        show(e.reason || 'unhandledrejection');
+        show((e.reason && e.reason.stack) || e.reason || 'unhandledrejection');
       });
     })();
   </script>
 
-  <!-- Boot do App (ES Modules) -->
-  <script type="module">
-    // Define a base (para app.js localizar assets ou workers corretamente)
-    window.__BP_BASE__ = location.pathname.replace(/\/[^/]*$/, '/');
-
-    // Força recarregamento leve em futuras versões
-    const APP_VERSION = '0.3.0';
-
-    import(`./assets/js/app.js?v=${APP_VERSION}`).catch(err => {
-      console.error('Falha ao carregar app.js', err);
-      const pre = document.createElement('pre');
-      pre.textContent = 'Falha ao carregar app.js\n' + (err && err.stack ? err.stack : err);
-      pre.style.cssText = 'white-space:pre-wrap;background:#220;color:#faa;padding:10px';
-      document.getElementById('app').prepend(pre);
-    });
-  </script>
+  <!-- App principal (ES Modules) -->
+  <script type="module" src="./assets/js/app.js"></script>
 </body>
 </html>
