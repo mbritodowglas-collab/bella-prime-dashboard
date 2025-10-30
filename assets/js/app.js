@@ -27,6 +27,14 @@ const pick = (obj, keys) => {
   for (const k of keys) if (obj[k] !== undefined && obj[k] !== '') return obj[k];
   return undefined;
 };
+function normNivel(n){
+  const s = strip(n||'');
+  if (s.startsWith('fund')) return 'Fundação';
+  if (s.startsWith('asc'))  return 'Ascensão';
+  if (s.startsWith('dom'))  return 'Domínio';
+  if (s.startsWith('over')) return 'OverPrime';
+  return undefined;
+}
 
 // Coleta todas as respostas do Sheets (para consulta completa no perfil)
 function collectAnswersFromRaw(raw){
@@ -44,7 +52,9 @@ function collectAnswersFromRaw(raw){
     // métricas que já extraímos separadamente
     'peso','peso (kg)','peso kg',
     'cintura','cintura (cm)','cintura cm',
-    'quadril','quadril (cm)','quadril cm'
+    'quadril','quadril (cm)','quadril cm',
+    // campos de promoção
+    'acao','ação','novo_nivel','novonivel','nivel_destino','nível_destino','professor','data_decisao','datadecisao'
   ]);
   const norm = s => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
   const out = {};
@@ -109,6 +119,14 @@ export const Store = {
           'cidade-estado','cidade - estado','cidade/estado','cidade uf','cidadeuf','cidade'
         ]) || '';
 
+        // Campos de ação (ex.: promoção pelo professor)
+        const acaoRaw = pick(o, ['acao','ação','action']);
+        const acao = strip(acaoRaw||''); // 'promover' quando for o caso
+        const novoNivelRaw = pick(o, ['novo_nivel','novonivel','nivel_destino','nível_destino']);
+        const novoNivel = normNivel(novoNivelRaw);
+        const dataDecisao = pick(o, ['data_decisao','datadecisao','data']) || todayISO();
+        const professor = pick(o, ['professor','coach','avaliador']);
+
         // Avaliação base (data/nivel/pontuacao)
         const dataAval = pick(o, ['data','dataavaliacao','ultimotreino']);
         const pontForm = Number(pick(o, ['pontuacao','pontuação','score','nota']) || 0);
@@ -124,18 +142,16 @@ export const Store = {
         const quadril = (quadrilRaw !== undefined && quadrilRaw !== '') ? Number(String(quadrilRaw).replace(',', '.')) : undefined;
         const rcq = (cintura && quadril && quadril !== 0) ? (cintura / quadril) : undefined;
 
-        // nível default (mantém tua lógica base)
+        // nível default (mantém tua lógica base) — NÃO sobrescrevemos por reavaliações
         const nivelDefault = (() => {
-          const n = strip(nivelIn || '');
-          if (n.startsWith('fund')) return 'Fundação';
-          if (n.startsWith('asc'))  return 'Ascensão';
-          if (n.startsWith('dom'))  return 'Domínio';
-          if (n.startsWith('over')) return 'OverPrime';
+          const n = normNivel(nivelIn);
+          if (n) return n;
           if (pontForm <= 2)  return 'Fundação';
           if (pontForm <= 6)  return 'Ascensão';
           return 'Domínio';
         })();
 
+        // Registro base
         const base = {
           id,
           nome: nome || '(Sem nome)',
@@ -147,15 +163,28 @@ export const Store = {
           ultimoTreino: dataAval || undefined,
           renovacaoDias: Number(pick(o,['renovacaodias','renovacao','ciclodias'])) || 30,
           avaliacoes: [],
-          treinos: [], // <<< histórico de treinos lançados
+          treinos: [],     // histórico de treinos lançados
+          promocoes: [],   // histórico de promoções oficiais (professor)
           _answers: collectAnswersFromRaw(raw)
         };
+
+        // --- Se for linha de PROMOÇÃO do professor, só registra a promoção ---
+        if (acao === 'promover' && novoNivel) {
+          base.promocoes.push({
+            para: novoNivel,
+            data: /^\d{4}-\d{2}-\d{2}$/.test(String(dataDecisao)) ? String(dataDecisao) : todayISO(),
+            professor: professor || ''
+          });
+          // não criar avaliação a partir dessa linha
+          return base;
+        }
 
         // --- Pontuação automática por respostas (só se não houver nota explícita no form) ---
         if ((!pontForm || isNaN(pontForm)) && base._answers && Object.keys(base._answers).length){
           const auto = calcularPontuacao(base._answers);
           base.pontuacao = auto;
-          base.nivel = nivelPorPontuacao(auto);
+          // Importante: reavaliações NÃO mudam nível; este cálculo serve para sugestão
+          // (nível real só muda por promoção do professor).
         }
 
         // adiciona avaliação com métricas, se houver algo
@@ -164,13 +193,14 @@ export const Store = {
           base.avaliacoes.push({
             data: dataISO,
             pontuacao: isNaN(base.pontuacao) ? 0 : base.pontuacao,
-            nivel: base.nivel,
+            // NÃO fixar o nível aqui para não mexer no nível real do cliente
             peso: isNaN(peso) ? undefined : peso,
             cintura: isNaN(cintura) ? undefined : cintura,
             quadril: isNaN(quadril) ? undefined : quadril,
             rcq: (typeof rcq === 'number' && !isNaN(rcq)) ? rcq : undefined
           });
         }
+
         return base;
       });
 
@@ -180,21 +210,39 @@ export const Store = {
         if (!map.has(r.id)) { map.set(r.id, r); continue; }
         const dst = map.get(r.id);
         for (const f of ['nome','contato','email','cidade']) if (!dst[f] && r[f]) dst[f] = r[f];
+
+        // histórico de avaliações
         dst.avaliacoes = [...(dst.avaliacoes||[]), ...(r.avaliacoes||[])];
+
+        // histórico de promoções
+        dst.promocoes  = [...(dst.promocoes || []), ...(r.promocoes || [])];
+
         if (!Array.isArray(dst.treinos)) dst.treinos = []; // garante array
         // não sobrescreve _answers; mantém o primeiro
       }
 
-      // ordena histórico por data
+      // ordena histórico por data e aplica regras de status/promoção
       const list = [...map.values()];
       for (const c of list) {
         if (Array.isArray(c.avaliacoes)) {
           c.avaliacoes.sort((a,b)=> (a.data||'').localeCompare(b.data||''));
           const last = c.avaliacoes[c.avaliacoes.length-1];
           if (last) {
+            // c.pontuacao sugere, mas não muda nível real
             c.pontuacao    = (typeof last.pontuacao === 'number') ? last.pontuacao : c.pontuacao;
-            c.nivel        = last.nivel || c.nivel;
             c.ultimoTreino = c.ultimoTreino || last.data;
+          }
+        }
+
+        // Aplica promoções oficiais em ordem cronológica
+        if (Array.isArray(c.promocoes) && c.promocoes.length) {
+          c.promocoes.sort((a,b)=> (a.data||'').localeCompare(b.data||''));
+          for (const p of c.promocoes) {
+            const destino = normNivel(p.para) || p.para;
+            if (destino) {
+              c.nivel = destino;            // muda o nível REAL
+              c.nivelMudadoEm = p.data;     // guarda a data da última mudança
+            }
           }
         }
       }
