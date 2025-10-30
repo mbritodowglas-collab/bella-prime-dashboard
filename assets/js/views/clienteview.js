@@ -1,3 +1,6 @@
+// ================================
+// VIEW: Perfil da Cliente
+// ================================
 import { Store, PROFESSOR_FORM_URL } from '../app.js';
 
 let pesoChart = null;
@@ -9,7 +12,9 @@ export const ClienteView = {
     const c = Store.byId(id);
     if (!c) return `<div class="card"><h2>Cliente não encontrada</h2></div>`;
 
+    // --- histórico de avaliações (tabela) ---
     const historico = (c.avaliacoes || [])
+      .slice()
       .sort((a,b)=> (a.data||'').localeCompare(b.data||''))
       .map(a=> `
         <tr>
@@ -21,7 +26,7 @@ export const ClienteView = {
         </tr>
       `).join('');
 
-    // respostas completas (mantido)
+    // --- respostas completas (para copiar) ---
     let blocoRespostas = '';
     if (c._answers && Object.keys(c._answers).length > 0) {
       const lista = Object.entries(c._answers)
@@ -40,33 +45,43 @@ export const ClienteView = {
       `;
     }
 
-    // --- Treinos registrados (corrigido: usa data_inicio/data_venc/observacao) ---
+    // --- normalização dos treinos para suportar as duas nomenclaturas ---
     const treinos = Array.isArray(c.treinos)
-      ? c.treinos.slice().sort((a,b)=>(b.data_inicio||'').localeCompare(a.data_inicio||''))
+      ? c.treinos.slice().map(t => ({
+          id: t.id,
+          programa: t.programa || '-',
+          data_inicio: t.data_inicio || t.inicio || '',
+          data_venc:   t.data_venc   || t.vencimento || '',
+          observacao:  t.observacao  || t.obs || '',
+          plano_texto: t.plano_texto || t.plano || '',
+          intensidades: Array.isArray(t.intensidades) ? t.intensidades : (t.intensidade ? [t.intensidade] : []),
+          status: t.status || null
+        }))
+        .sort((a,b)=>(b.data_inicio||'').localeCompare(a.data_inicio||''))
       : [];
 
     const linhasTreino = treinos.map(t => {
-      const status = calcStatusTreino(t); // Ativo ou Vencido
+      const status = calcStatusTreino(t); // Ativo / Vencido
       return `
         <tr>
-          <td><span class="badge">${escapeHTML(t.programa || '-')}</span></td>
+          <td><span class="badge">${escapeHTML(t.programa)}</span></td>
           <td>${t.data_inicio || '-'} → ${t.data_venc || '-'}</td>
           <td><span class="status ${status==='Ativo'?'st-ok':'st-bad'}">${status}</span></td>
           <td>${escapeHTML(t.observacao || '')}</td>
-          <td style="text-align:right">
+          <td style="text-align:right; white-space:nowrap;">
             <button class="btn btn-outline btn-del-treino" data-treino="${escapeHTML(t.id || '')}">Excluir</button>
           </td>
         </tr>
       `;
     }).join('');
 
-    // Badges de nível sugerido / prontidão / elegibilidade
+    // --- badges ---
     const sugerido = c.sugestaoNivel ? `<span class="badge" style="background:#2b6777">sugerido: ${c.sugestaoNivel}</span>` : '';
     const readyTag = c.readiness ? `<span class="badge" style="background:${badgeColor(c.readiness)}">${c.readiness}</span>` : '';
     const elegivel = c.elegivelPromocao ? `<span class="badge" style="background:#7cb342">elegível</span>` : '';
     const prontasN = c.prontaConsecutivas ? `<small style="opacity:.75">(${c.prontaConsecutivas} reavaliaç${c.prontaConsecutivas>1?'ões':'ão'} prontas seguidas)</small>` : '';
 
-    // CTA do Professor (pré-preenchido com id/nome simples)
+    // --- CTA formulário do professor ---
     const linkProfessor = (PROFESSOR_FORM_URL && c.id)
       ? `${PROFESSOR_FORM_URL}?id=${encodeURIComponent(c.id)}&nome=${encodeURIComponent(c.nome||'')}`
       : '';
@@ -112,15 +127,6 @@ export const ClienteView = {
 
       ${blocoRespostas}
 
-      <section class="card">
-        <h3>Histórico de Avaliações</h3>
-        <table class="table">
-          <thead><tr><th>Data</th><th>Nível</th><th>Pontuação</th><th>Sugerido</th><th>Prontidão</th></tr></thead>
-          <tbody>${historico || '<tr><td colspan="5">Nenhum registro ainda.</td></tr>'}</tbody>
-        </table>
-      </section>
-
-      <!-- gráficos mantidos -->
       <section class="card chart-card">
         <h3>Evolução do Peso (kg)</h3>
         <div id="pesoEmpty" style="display:none;color:#aaa">Sem dados de peso suficientes.</div>
@@ -166,7 +172,7 @@ export const ClienteView = {
       });
     }
 
-    // Excluir treino (delegação por botão)
+    // Excluir treino
     document.querySelectorAll('.btn-del-treino').forEach(btn => {
       btn.addEventListener('click', () => {
         const tid = btn.getAttribute('data-treino');
@@ -181,7 +187,10 @@ export const ClienteView = {
       });
     });
 
-    // ===== Peso =====
+    // ========== Gráficos (somente se Chart estiver carregado) ==========
+    if (typeof window.Chart !== 'function') return;
+
+    // Peso
     const pesoCtx = document.getElementById('chartPeso');
     const pesoEmpty = document.getElementById('pesoEmpty');
     const seriePeso = (c.avaliacoes || [])
@@ -206,14 +215,16 @@ export const ClienteView = {
       if (pesoEmpty) pesoEmpty.style.display = 'none';
     } else if (pesoEmpty) { pesoEmpty.style.display = 'block'; }
 
-    // ===== RCQ =====
+    // RCQ
     const rcqCtx = document.getElementById('chartRCQ');
     const rcqEmpty = document.getElementById('rcqEmpty');
     const serieRCQ = (c.avaliacoes || [])
       .map(a => {
         const rcq = (typeof a.rcq === 'number' && !isNaN(a.rcq))
           ? a.rcq
-          : (a.cintura && a.quadril && Number(a.quadril) !== 0 ? Number(a.cintura)/Number(a.quadril) : undefined);
+          : (toNum(a.cintura) && toNum(a.quadril) && Number(a.quadril) !== 0
+              ? Number(a.cintura)/Number(a.quadril)
+              : undefined);
         return { ...a, rcq };
       })
       .filter(a => typeof a.rcq === 'number' && !isNaN(a.rcq))
@@ -237,14 +248,14 @@ export const ClienteView = {
       if (rcqEmpty) rcqEmpty.style.display = 'none';
     } else if (rcqEmpty) { rcqEmpty.style.display = 'block'; }
 
-    // ===== WHtR =====
+    // WHtR
     const whtrCtx = document.getElementById('chartWHtR');
     const whtrEmpty = document.getElementById('whtrEmpty');
     const serieWHtR = (c.avaliacoes || [])
       .map(a => {
         const cintura = toNum(a.cintura);
         let altura = toNum(a.altura);
-        if (typeof altura === 'number' && altura <= 3) altura = altura*100;
+        if (typeof altura === 'number' && altura <= 3) altura = altura*100; // se veio em metros
         const whtr = (typeof a.whtr === 'number' && !isNaN(a.whtr))
           ? a.whtr
           : (Number.isFinite(cintura) && Number.isFinite(altura) && altura !== 0 ? cintura/altura : undefined);
@@ -274,20 +285,22 @@ export const ClienteView = {
   }
 };
 
-// helpers
+// ============ helpers ============
 function escapeHTML(s){
   return String(s || '').replace(/[&<>"']/g, m =>
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 }
 function escapePlain(s){ return String(s || '').replace(/\r?\n/g, '\n'); }
-function toNum(v){ const n = Number(String(v).replace(',', '.')); return Number.isFinite(n) ? n : undefined; }
-
+function toNum(v){
+  if (v === undefined || v === null || v === '') return undefined;
+  const n = Number(String(v).replace(',', '.'));
+  return Number.isFinite(n) ? n : undefined;
+}
 function badgeColor(readiness){
   if (readiness === 'Pronta para subir') return '#2e7d32';
   if (readiness === 'Quase lá') return '#f9a825';
   return '#455a64';
 }
-
 function calcStatusTreino(t){
   const hoje = new Date(); hoje.setHours(12,0,0,0);
   const dIni = t?.data_inicio ? new Date(`${t.data_inicio}T12:00:00`) : null;
