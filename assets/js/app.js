@@ -6,6 +6,8 @@ import { DashboardView } from './views/dashboardview.js';
 import { ClienteView }   from './views/clienteview.js';
 import { AvaliacaoView } from './views/avaliacaoview.js';
 import { TreinoView }    from './views/treinoview.js'; // <<< NOVO
+import { RelatorioView } from './views/relatorioview.js';
+
 
 // ---------- Config gerais ----------
 const SHEETS_API = 'https://script.google.com/macros/s/AKfycbyAafbpJDWr4RF9hdTkzmnLLv1Ge258hk6jlnDo7ng2kk88GoWyJzp63rHZPMDJA-wy/exec';
