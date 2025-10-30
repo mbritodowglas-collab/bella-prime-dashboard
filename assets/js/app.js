@@ -5,18 +5,12 @@
 import { DashboardView } from './views/dashboardview.js';
 import { ClienteView }   from './views/clienteview.js';
 import { AvaliacaoView } from './views/avaliacaoview.js';
-import { TreinoView }    from './views/treinoview.js';
-import { RelatorioView } from './views/relatorioview.js'; // <<< NOVO (PDF/link externo)
+import { TreinoView }    from './views/treinoview.js'; // <<< NOVO
 
 const SHEETS_API = 'https://script.google.com/macros/s/AKfycbyAafbpJDWr4RF9hdTkzmnLLv1Ge258hk6jlnDo7ng2kk88GoWyJzp63rHZPMDJA-wy/exec';
 
-// ---- Configurações de integrações/branding ----
-// Google Forms (pré-preencher com ?id=&nome=)
+// Se quiser pré-preencher o Form do Professor, coloque aqui a URL base (Google Forms)
 export const PROFESSOR_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLScvQBCSEVdTspYgelGI0zWbrK21ttO1IUKuf9_j5rO_a2czfA/viewform?usp=header';
-
-// Logo em PNG para o relatório PDF (ajuste o caminho do arquivo conforme sua pasta de assets)
-export const RELATORIO_LOGO_PNG = './assets/img/logo-mdpersonal.png'; // <<< PNG
-export const BRAND_NAME = 'Márcio Dowglas Trainer'; // aparece no cabeçalho do relatório
 
 // ---------- Datas ----------
 const todayISO = () => {
@@ -312,8 +306,8 @@ export function statusCalc(c){
 // ---------- Programas permitidos por nível ----------
 export function programsByLevel(nivel){
   switch (nivel) {
-    case 'Fundação': return ['ABC','ABCD'];
-    case 'Ascensão': return ['ABC','ABCD'];
+    case 'Fundação': return ['ABC','ABCD'];                 // requisito
+    case 'Ascensão': return ['ABC','ABCD'];                 // pode abrir depois
     case 'Domínio' : return ['ABC','ABCD','ABCDE','ABCDEF'];
     case 'OverPrime': return ['ABC','ABCD','ABCDE','ABCDEF'];
     default: return ['ABC','ABCD'];
@@ -395,8 +389,7 @@ const routes = [
   { path: new RegExp('^#\\/$'),                         view: DashboardView },
   { path: new RegExp('^#\\/cliente\\/' + idRe + '$'),   view: ClienteView   },
   { path: new RegExp('^#\\/avaliacao\\/' + idRe + '$'), view: AvaliacaoView },
-  { path: new RegExp('^#\\/treino\\/' + idRe + '\\/novo$'), view: TreinoView },
-  { path: new RegExp('^#\\/relatorio\\/' + idRe + '$'), view: RelatorioView }, // <<< NOVO
+  { path: new RegExp('^#\\/treino\\/' + idRe + '\\/novo$'), view: TreinoView }, // <<< NOVO
 ];
 
 async function render(){
