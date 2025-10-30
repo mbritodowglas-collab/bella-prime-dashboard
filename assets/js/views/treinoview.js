@@ -13,7 +13,7 @@ export const TreinoView = {
       <section class="card">
         <a href="#/cliente/${c.id}" class="btn btn-outline" style="margin-bottom:10px;">← Voltar</a>
         <h2>Lançar novo treino — ${escapeHTML(c.nome)}</h2>
-        <p style="opacity:.8;margin-top:6px">Nível atual: <b>${c.nivel}</b></p>
+        <p style="opacity:.8;margin-top:6px">Nível atual: <b>${c.nivel || '-'}</b></p>
       </section>
 
       <section class="card">
