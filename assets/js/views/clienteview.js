@@ -40,13 +40,13 @@ export const ClienteView = {
       `;
     }
 
-    // --- Treinos registrados (mantido) ---
+    // --- Treinos registrados ---
     const treinos = Array.isArray(c.treinos) ? c.treinos.slice().sort((a,b)=>(b.inicio||'').localeCompare(a.inicio||'')) : [];
     const linhasTreino = treinos.map(t => `
       <tr>
         <td><span class="badge">${escapeHTML(t.programa)}</span></td>
         <td>${t.inicio} → ${t.vencimento}</td>
-        <td><span class="status ${t.status==='Ativo'?'st-ok':'st-bad'}">${t.status}</span></td>
+        <td><span class="status ${t.status==='Ativo'?'st-ok':'st-bad'}">${t.status||'-'}</span></td>
         <td>${escapeHTML(t.obs || '')}</td>
       </tr>
     `).join('');
@@ -62,7 +62,7 @@ export const ClienteView = {
       ? `${PROFESSOR_FORM_URL}?id=${encodeURIComponent(c.id)}&nome=${encodeURIComponent(c.nome||'')}`
       : '';
     const ctaProfessor = linkProfessor
-      ? `<a class="btn btn-primary" href="${linkProfessor}" target="_blank" rel="noopener">📋 Abrir Formulário do Professor</a>`
+      ? `<a class="btn btn-primary" href="${linkProfessor}" target="_blank" rel="noopener">📋 Formulário do Professor</a>`
       : `<button class="btn btn-outline" id="professorFormBtn" title="Defina PROFESSOR_FORM_URL no app.js">📋 Formulário do Professor</button>`;
 
     return `
@@ -80,7 +80,6 @@ export const ClienteView = {
         ${c.email   ? `<p><b>E-mail:</b> ${escapeHTML(c.email)}</p>` : ''}
         ${c.contato ? `<p><b>WhatsApp:</b> ${escapeHTML(c.contato)}</p>` : ''}
         <div class="row" style="gap:10px;margin-top:12px">
-          <a class="btn" href="#/treino/${c.id}/novo">➕ Lançar novo treino</a>
           ${ctaProfessor}
         </div>
       </section>
