@@ -5,6 +5,7 @@
 import { DashboardView } from './views/dashboardview.js';
 import { ClienteView }   from './views/clienteview.js';
 import { AvaliacaoView } from './views/avaliacaoview.js';
+import { TreinoView }    from './views/treinoview.js'; // <<< NOVO
 
 const SHEETS_API = 'https://script.google.com/macros/s/AKfycbyAafbpJDWr4RF9hdTkzmnLLv1Ge258hk6jlnDo7ng2kk88GoWyJzp63rHZPMDJA-wy/exec';
 
@@ -144,6 +145,7 @@ export const Store = {
           ultimoTreino: dataAval || undefined,
           renovacaoDias: Number(pick(o,['renovacaodias','renovacao','ciclodias'])) || 30,
           avaliacoes: [],
+          treinos: [], // <<< NOVO: histórico de treinos lançados
           _answers: collectAnswersFromRaw(raw)
         };
 
@@ -170,7 +172,8 @@ export const Store = {
         const dst = map.get(r.id);
         for (const f of ['nome','contato','email','cidade']) if (!dst[f] && r[f]) dst[f] = r[f];
         dst.avaliacoes = [...(dst.avaliacoes||[]), ...(r.avaliacoes||[])];
-        // não sobrescreve _answers; mantém o primeiro (ou você pode mesclar se quiser)
+        if (!Array.isArray(dst.treinos)) dst.treinos = []; // garante array
+        // não sobrescreve _answers; mantém o primeiro
       }
 
       // ordena histórico por data
@@ -229,12 +232,24 @@ export function statusCalc(c){
   return            { label:'Vencida',              klass:'st-bad'  };
 }
 
+// ---------- Programas permitidos por nível (para a página de lançamento) ----------
+export function programsByLevel(nivel){
+  switch (nivel) {
+    case 'Fundação': return ['ABC','ABCD'];                 // seu requisito
+    case 'Ascensão': return ['ABCD','ABCDE'];               // sugestão
+    case 'Domínio' : return ['ABCD','ABCDE','ABCDEF'];      // sugestão
+    case 'OverPrime': return ['ABCDE','ABCDEF'];            // sugestão
+    default: return ['ABC','ABCD'];
+  }
+}
+
 // ---------- Router ----------
 const idRe = '([\\w\\-+.@=]+)';
 const routes = [
   { path: new RegExp('^#\\/$'),                         view: DashboardView },
   { path: new RegExp('^#\\/cliente\\/' + idRe + '$'),   view: ClienteView   },
   { path: new RegExp('^#\\/avaliacao\\/' + idRe + '$'), view: AvaliacaoView },
+  { path: new RegExp('^#\\/treino\\/' + idRe + '\\/novo$'), view: TreinoView }, // <<< NOVO
 ];
 
 async function render(){
