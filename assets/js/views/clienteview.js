@@ -40,19 +40,25 @@ export const ClienteView = {
       `;
     }
 
-    // --- Treinos registrados ---
-    const treinos = Array.isArray(c.treinos) ? c.treinos.slice().sort((a,b)=>(b.inicio||'').localeCompare(a.inicio||'')) : [];
-    const linhasTreino = treinos.map(t => `
-      <tr>
-        <td><span class="badge">${escapeHTML(t.programa || '-')}</span></td>
-        <td>${t.inicio || '-'} → ${t.vencimento || '-'}</td>
-        <td><span class="status ${t.status==='Ativo'?'st-ok':'st-bad'}">${t.status||'-'}</span></td>
-        <td>${escapeHTML(t.obs || t.observacao || '')}</td>
-        <td style="text-align:right">
-          <button class="btn btn-outline btn-del-treino" data-treino="${escapeHTML(t.id || '')}">Excluir</button>
-        </td>
-      </tr>
-    `).join('');
+    // --- Treinos registrados (corrigido: usa data_inicio/data_venc/observacao) ---
+    const treinos = Array.isArray(c.treinos)
+      ? c.treinos.slice().sort((a,b)=>(b.data_inicio||'').localeCompare(a.data_inicio||''))
+      : [];
+
+    const linhasTreino = treinos.map(t => {
+      const status = calcStatusTreino(t); // Ativo ou Vencido
+      return `
+        <tr>
+          <td><span class="badge">${escapeHTML(t.programa || '-')}</span></td>
+          <td>${t.data_inicio || '-'} → ${t.data_venc || '-'}</td>
+          <td><span class="status ${status==='Ativo'?'st-ok':'st-bad'}">${status}</span></td>
+          <td>${escapeHTML(t.observacao || '')}</td>
+          <td style="text-align:right">
+            <button class="btn btn-outline btn-del-treino" data-treino="${escapeHTML(t.id || '')}">Excluir</button>
+          </td>
+        </tr>
+      `;
+    }).join('');
 
     // Badges de nível sugerido / prontidão / elegibilidade
     const sugerido = c.sugestaoNivel ? `<span class="badge" style="background:#2b6777">sugerido: ${c.sugestaoNivel}</span>` : '';
@@ -281,4 +287,11 @@ function badgeColor(readiness){
   if (readiness === 'Quase lá') return '#f9a825';
   return '#455a64';
 }
-```0
+
+function calcStatusTreino(t){
+  const hoje = new Date(); hoje.setHours(12,0,0,0);
+  const dIni = t?.data_inicio ? new Date(`${t.data_inicio}T12:00:00`) : null;
+  const dVen = t?.data_venc   ? new Date(`${t.data_venc}T12:00:00`)   : null;
+  if (dIni && dVen && dIni <= hoje && hoje <= dVen) return 'Ativo';
+  return 'Vencido';
+}
