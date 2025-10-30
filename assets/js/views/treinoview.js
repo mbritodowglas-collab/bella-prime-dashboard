@@ -3,6 +3,7 @@
 // ================================
 import { Store, programsByLevel } from '../app.js';
 
+// ---------- Datas ----------
 const todayISO = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -16,7 +17,7 @@ const addDays = (iso, days=28) => {
   return `${y}-${m}-${dd}`;
 };
 
-// ---------- Presets por nível (parâmetros + cardio) ----------
+// ---------- Parâmetros por nível (com cardio) ----------
 const PARAMS = {
   'Fundação': {
     series: '3',
@@ -28,7 +29,8 @@ const PARAMS = {
     cardio: [
       { tipo: 'LISS', duracao_min: 25, FCR: '60–65%', instrucao: 'Ritmo contínuo, conversa possível.' },
       { tipo: 'MISS (opcional)', duracao_min: 15, FCR: '65–70%', instrucao: 'Ritmo sustentado, fala entrecortada.' }
-    ]
+    ],
+    intensidades: ['≈50–65% (nível de base)']
   },
   'Ascensão': {
     series: '3',
@@ -87,36 +89,14 @@ const PARAMS = {
   }
 };
 
-// Intensidades locais para UI
+// ---------- Intensidades (UI) ----------
 function intensidadesParaNivel_UI(nivel) {
   const n = String(nivel||'').trim();
   const p = PARAMS[n];
   if (!p) return null;
-  if (n === 'Fundação') return ['≈50–65% (nível de base)'];
-  if (n === 'Ascensão') return p.intensidades;
-  return p.intensidades; // Domínio/OverPrime
+  return p.intensidades || null;
 }
 
-// --------- restrições (heurística) ---------
-function extrairRestricoes(ans){
-  const linhas = Object.entries(ans||{});
-  const picks = [];
-  const KW = ['asma','lesão','lesao','dor','lombar','joelho','ombro','tendinite','condromalácia','hernia','hérnia','hipertensão','pressão alta','diabetes','gestação','gravidez','cardíaco','cardiaco'];
-  for (const [k,vRaw] of linhas){
-    const kL = k.toLowerCase();
-    const v = String(vRaw||'').toLowerCase();
-    const marcouSim = /(^|\b)(sim|tenho|possuo|diagnosticada|asma)(\b|$)/.test(v);
-    const matchKW = KW.find(w => v.includes(w));
-    const pareceExemplo = /(exemplo|ex:|ex\.|por exemplo)/.test(v);
-    if ((marcouSim || matchKW) && !pareceExemplo){
-      const item = matchKW ? matchKW : (kL.includes('asma') ? 'asma' : null);
-      if (item && !picks.includes(item)) picks.push(item);
-    }
-  }
-  return picks.length ? `atenção a: ${picks.join(', ')}` : '';
-}
-
-// ---------- Helpers UI ----------
 function renderIntensidades(nivel){
   const lista = intensidadesParaNivel_UI(nivel) || [];
   if (nivel === 'Domínio' || nivel === 'OverPrime'){
@@ -142,6 +122,26 @@ function renderIntensidades(nivel){
     </div>`;
 }
 
+// ---------- Heurística de restrições a partir das respostas ----------
+function extrairRestricoes(ans){
+  const linhas = Object.entries(ans||{});
+  const picks = [];
+  const KW = ['asma','lesão','lesao','dor','lombar','joelho','ombro','tendinite','condromalácia','hernia','hérnia','hipertensão','pressão alta','diabetes','gestação','gravidez','cardíaco','cardiaco'];
+  for (const [k,vRaw] of linhas){
+    const kL = k.toLowerCase();
+    const v = String(vRaw||'').toLowerCase();
+    const marcouSim = /(^|\b)(sim|tenho|possuo|diagnosticada|asma)(\b|$)/.test(v);
+    const matchKW = KW.find(w => v.includes(w) || kL.includes(w));
+    const pareceExemplo = /(exemplo|ex:|ex\.|por exemplo)/.test(v);
+    if ((marcouSim || matchKW) && !pareceExemplo){
+      const item = matchKW ? matchKW : (kL.includes('asma') ? 'asma' : null);
+      if (item && !picks.includes(item)) picks.push(item);
+    }
+  }
+  return picks.length ? `atenção a: ${picks.join(', ')}` : '';
+}
+
+// ---------- View ----------
 export const TreinoView = {
   async template(id){
     const c = Store.byId(id);
@@ -151,7 +151,18 @@ export const TreinoView = {
     const hoje = todayISO();
     const venc = addDays(hoje, 28);
 
+    const css = `
+      <style>
+        .tw-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+        @media (max-width:760px){.tw-grid{grid-template-columns:1fr}}
+        .tw-textarea{width:100%;min-height:220px;resize:vertical;padding:12px;border-radius:10px;border:1px solid var(--border);
+          background:rgba(255,255,255,.03);color:#eee;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace}
+        .tw-help{opacity:.75;margin-top:6px;display:block}
+      </style>
+    `;
+
     return `
+      ${css}
       <section class="card">
         <a href="#/cliente/${c.id}" class="btn btn-outline" style="margin-bottom:10px">← Voltar</a>
         <h2>Lançar novo treino — ${escapeHTML(c.nome || '')}</h2>
@@ -159,7 +170,7 @@ export const TreinoView = {
       </section>
 
       <section class="card">
-        <div class="row" style="gap:12px;align-items:flex-end;flex-wrap:wrap">
+        <div class="tw-grid">
           <div class="field">
             <label>Programa</label>
             <select id="progSel" class="input">
@@ -167,7 +178,9 @@ export const TreinoView = {
             </select>
           </div>
 
-          ${renderIntensidades(c.nivel || 'Fundação')}
+          <div class="field">
+            ${renderIntensidades(c.nivel || 'Fundação')}
+          </div>
 
           <div class="field">
             <label>Início</label>
@@ -179,25 +192,25 @@ export const TreinoView = {
             <input id="ven" type="date" class="input" value="${venc}">
           </div>
 
-          <div class="field" style="flex:1 1 260px">
+          <div class="field" style="grid-column:1/-1">
             <label>Observação (opcional)</label>
             <input id="obs" type="text" class="input" placeholder="Anotações rápidas…">
           </div>
-        </div>
 
-        <div class="field" style="margin-top:12px">
-          <label>Plano de treino (cole aqui o que você criou/usou no MFIT)</label>
-          <textarea id="planoTxt" rows="14" class="input" placeholder="Ex.:
+          <div class="field" style="grid-column:1/-1">
+            <label>Plano de treino (cole o que criou/usou no MFIT)</label>
+            <textarea id="planoTxt" class="tw-textarea" placeholder="Ex.:
 DIA A — Inferior (ênfase em quadríceps)
 1) Agachamento hack — 4×8–10 (RPE 8)
 2) Leg press — 4×10–12
 3) Cadeira extensora — 3×12–15 (drop set na última)
-...
+
 Cardio: LISS 25 min · 60–65% FCR"></textarea>
-          <small style="opacity:.8">Este conteúdo será salvo junto com o lançamento do treino.</small>
+            <small class="tw-help">Será salvo junto com o lançamento.</small>
+          </div>
         </div>
 
-        <div class="row" style="gap:10px;margin-top:14px">
+        <div class="row" style="gap:10px;margin-top:14px;flex-wrap:wrap">
           <button class="btn btn-primary" id="salvarBtn">Salvar</button>
           <button class="btn btn-danger"  id="promptBtn">⚙️ Gerar Prompt</button>
         </div>
@@ -234,17 +247,17 @@ Cardio: LISS 25 min · 60–65% FCR"></textarea>
       location.hash = `#/cliente/${c.id}`;
     });
 
-    promptBtn?.addEventListener('click', () => {
+    promptBtn?.addEventListener('click', async () => {
       const rec = lerFormulario(c);
       const texto = montarPrompt(c, rec);
-      copiar(texto);
+      await copiar(texto);
       promptBtn.textContent = 'Prompt copiado!';
       setTimeout(()=> promptBtn.textContent = '⚙️ Gerar Prompt', 1200);
     });
   }
 };
 
-// -------- helpers --------
+// ---------- Helpers de formulário / prompt / util ----------
 function lerFormulario(c){
   const programa = document.getElementById('progSel')?.value || 'ABC';
   const inicio   = document.getElementById('ini')?.value || todayISO();
@@ -266,11 +279,11 @@ function lerFormulario(c){
     intensidadeTxt = unica || '';
   }
 
-  // usa as mesmas chaves que o ClienteView já exibe
+  // chaves compatíveis com ClienteView
   return {
     id: `t_${Date.now()}`,
     programa,
-    intensidade: intensidadeTxt,   // string (compatibilidade)
+    intensidade: intensidadeTxt,   // string (compat)
     intensidades: intensidadesArr, // array (quando houver)
     inicio,
     vencimento: venc,
@@ -344,16 +357,25 @@ function montarPrompt(cliente, treino){
   return linhas.filter(Boolean).join('\n');
 }
 
-function copiar(s){
+async function copiar(texto) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(String(texto));
+      return true;
+    }
+  } catch {}
   const ta = document.createElement('textarea');
-  ta.value = s;
+  ta.value = String(texto);
+  ta.setAttribute('readonly','');
+  ta.style.position='fixed'; ta.style.left='-9999px';
   document.body.appendChild(ta);
-  ta.select();
-  document.execCommand('copy');
+  ta.select(); ta.setSelectionRange(0, ta.value.length);
+  const ok = document.execCommand('copy');
   document.body.removeChild(ta);
+  return ok;
 }
 
-function escapeHTML(s){
-  return String(s || '').replace(/[&<>"']/g, m =>
-    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+function escapeHTML(s=''){
+  return String(s).replace(/[&<>"']/g, m =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;', "'":'&#39;'}[m]));
 }
