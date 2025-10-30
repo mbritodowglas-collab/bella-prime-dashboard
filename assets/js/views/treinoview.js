@@ -155,11 +155,40 @@ function montarPrompt(cliente, treino){
   return linhas.filter(Boolean).join('\n');
 }
 
+/**
+ * Extrai restrições olhando **apenas os valores** das respostas.
+ * Remove exemplos em parênteses e deduplica.
+ * Resultado típico: "atenção a: asma"
+ */
 function extrairRestricoes(ans){
-  const texto = Object.entries(ans).map(([k,v])=>`${k}: ${v}`.toLowerCase()).join(' | ');
-  const chaves = ['lesão','lesao','dor','hérnia','hernia','lombar','joelho','ombro','tendinite','condromalácia','asma','hipertensão','pressão','diabetes','gestação','gravidez'];
-  const achados = chaves.filter(k => texto.includes(k));
-  return achados.length ? `atenção a: ${achados.join(', ')}` : '';
+  // pega apenas os VALORES das respostas
+  const valores = Object.values(ans)
+    .map(v => String(v || '').toLowerCase())
+    // remove qualquer coisa entre parênteses: (lesão, dor, asma...)
+    .map(s => s.replace(/\([^)]*\)/g, ' '))
+    // normaliza múltiplos espaços
+    .map(s => s.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+
+  if (!valores.length) return '';
+
+  const keywords = [
+    'asma','lesão','lesao','dor','hérnia','hernia','lombar','joelho','ombro',
+    'tendinite','condromalácia','condromalacia','hipertensão','pressão',
+    'diabetes','gestação','gravidez'
+  ];
+
+  const achados = new Set();
+  for (const v of valores){
+    for (const k of keywords){
+      // procura a palavra como token (evita falsos positivos dentro de outras)
+      const rx = new RegExp(`\\b${k}\\b`, 'i');
+      if (rx.test(v)) achados.add(k);
+    }
+  }
+
+  const lista = [...achados];
+  return lista.length ? `atenção a: ${lista.join(', ')}` : '';
 }
 
 function copiar(s){
