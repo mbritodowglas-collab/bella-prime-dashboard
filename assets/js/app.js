@@ -14,7 +14,7 @@ const SHEETS_API = 'https://script.google.com/macros/s/AKfycbyAafbpJDWr4RF9hdTkz
 // ---- Configurações de integrações/branding ----
 export const PROFESSOR_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLScvQBCSEVdTspYgelGI0zWbrK21ttO1IUKuf9_j5rO_a2czfA/viewform?usp=header';
 
-// Logo em PNG usada pelo relatório
+// Logo em PNG usada pelo relatório (confira o caminho na sua pasta /assets)
 export const RELATORIO_LOGO_PNG = './assets/img/logo-mdpersonal.png';
 export const BRAND_NAME = 'Márcio Dowglas Trainer';
 
@@ -49,11 +49,13 @@ const normNivel = (x='') => {
 function collectAnswersFromRaw(raw){
   if (!raw) return {};
   const ignore = new Set([
+    // identificação
     'id','identificador','uid','usuario',
     'nome','nome completo','seu nome','qual e o seu nome','qual seu nome','aluna','cliente','paciente',
     'contato','whatsapp','whats','telefone',
     'email','e-mail','mail',
     'cidade-estado','cidade - estado','cidade/estado','cidade_estado','cidade-uf','cidade uf','cidadeuf','cidade',
+    // status/nivel
     'nivel','nível','nivelatual','fase','faixa',
     'pontuacao','pontuação','score','pontos','nota',
     'ultimotreino','ultimaavaliacao','dataavaliacao','data',
@@ -144,7 +146,7 @@ export const Store = {
         const quadril = (quadrilRaw !== undefined && quadrilRaw !== '') ? Number(String(quadrilRaw).replace(',', '.')) : undefined;
         const rcq = (cintura && quadril && quadril !== 0) ? (cintura / quadril) : undefined;
 
-        // nível default
+        // nível default (mantém tua lógica)
         const nivelDefault = (() => {
           const n = normNivel(nivelIn || '');
           if (n) return n;
@@ -346,6 +348,7 @@ export function calcularPontuacao(respostas) {
   ];
 
   let score = 0;
+
   for (const [pergunta, resposta] of Object.entries(respostas)) {
     for (const c of criterios) {
       if (c.chave.test(pergunta)) {
@@ -355,6 +358,7 @@ export function calcularPontuacao(respostas) {
       }
     }
   }
+
   score = Math.max(0, Math.min(9, score));
   return score;
 }
