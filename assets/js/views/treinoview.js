@@ -27,7 +27,7 @@ function intensidadesParaNivel(nivel) {
       'Lapidação / Refinamento (≈75–80%)'
     ];
   }
-  return null; // níveis iniciais não pedem intensidade
+  return null;
 }
 
 export const TreinoView = {
@@ -98,7 +98,6 @@ export const TreinoView = {
 
     salvarBtn?.addEventListener('click', () => {
       const rec = lerFormulario(c);
-      // garante array
       if (!Array.isArray(c.treinos)) c.treinos = [];
       c.treinos.push(rec);
       Store.upsert(c);
@@ -115,7 +114,7 @@ export const TreinoView = {
   }
 };
 
-// -------- helpers locais --------
+// -------- helpers --------
 function lerFormulario(c){
   const programa = document.getElementById('progSel')?.value || 'ABC';
   const intensidade = document.getElementById('intSel')?.value || null;
@@ -128,32 +127,18 @@ function lerFormulario(c){
     data_inicio: inicio,
     data_venc: venc,
     programa,
-    intensidade, // pode ser null
+    intensidade,
     observacao: obs
   };
 }
 
 function montarPrompt(cliente, treino){
-  // Restrições físicas/clinicas: varre respostas completas procurando palavras-chave
   const answers = cliente._answers || {};
   const txtRestricoes = extrairRestricoes(answers);
 
-  // Base do sistema fornecida por você (resumo mínimo no prompt)
-  const sistema = {
-    sistema: "Bella Prime · Evo360 Bodybuilding",
-    versao: "2025.03",
-    nivel: cliente.nivel || "Fundação",
-    programa: treino.programa,
-    intensidade: treino.intensidade || null,
-    janela: { inicio: treino.data_inicio, vencimento: treino.data_venc },
-    obs: treino.observacao || null,
-    restricoes: txtRestricoes || null
-  };
-
-  // Prompt final enxuto para colar no chat de prescrição
-  return [
-    "Você é um prescritor de musculação do sistema Bella Prime · Evo360.",
-    "Gere um PROGRAMA DE TREINO estruturado para a cliente abaixo, seguindo as regras do nível.",
+  const linhas = [
+    "Você é prescritor do sistema Bella Prime · Evo360.",
+    "Gere um PROGRAMA DE TREINO estruturado seguindo as regras do nível.",
     "",
     `Cliente: ${cliente.nome} | Nível: ${cliente.nivel || '-'}`,
     `Programa: ${treino.programa}${treino.intensidade ? ` | Intensidade: ${treino.intensidade}` : ''}`,
@@ -162,19 +147,16 @@ function montarPrompt(cliente, treino){
     txtRestricoes ? `Restrições/atenções: ${txtRestricoes}` : null,
     treino.observacao ? `Observações do coach: ${treino.observacao}` : null,
     "",
-    "Formato de saída requerido:",
-    "- Estruturar por sessões (A, B, C...), com Mobilidade (3 itens), Principais (6–8 exercícios com ordem sugerida), parâmetros (séries, reps, descanso, cadência).",
-    "- Cardio ao final com FCR (Karvonen) indicando tipo, duração e %FCR + instrução prática.",
-    "- Incluir observações do MÉTODO (pirâmide truncada ±5%, isometria leve 2s, circuito leve) quando aplicável ao nível.",
-  ].filter(Boolean).join('\n');
+    "Formato de saída:",
+    "- Sessions (A, B, C...), com Mobilidade (3 itens), Principais (6–8 exercícios), parâmetros (séries, reps, descanso, cadência).",
+    "- Cardio ao final por FCR (Karvonen): tipo, duração, %FCR e instrução prática.",
+    "- Aplicar observações do método (pirâmide truncada ±5%, isometria leve 2s, circuito leve) quando couber."
+  ];
+  return linhas.filter(Boolean).join('\n');
 }
 
 function extrairRestricoes(ans){
-  const texto = Object.entries(ans)
-    .map(([k,v])=>`${k}: ${v}`.toLowerCase())
-    .join(' | ');
-
-  // heurística simples (pode expandir a lista)
+  const texto = Object.entries(ans).map(([k,v])=>`${k}: ${v}`.toLowerCase()).join(' | ');
   const chaves = ['lesão','lesao','dor','hérnia','hernia','lombar','joelho','ombro','tendinite','condromalácia','asma','hipertensão','pressão','diabetes','gestação','gravidez'];
   const achados = chaves.filter(k => texto.includes(k));
   return achados.length ? `atenção a: ${achados.join(', ')}` : '';
