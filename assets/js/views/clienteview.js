@@ -21,7 +21,7 @@ export const ClienteView = {
         </tr>
       `).join('');
 
-    // respostas completas (mantido)
+    // respostas completas
     let blocoRespostas = '';
     if (c._answers && Object.keys(c._answers).length > 0) {
       const lista = Object.entries(c._answers)
@@ -41,29 +41,39 @@ export const ClienteView = {
     }
 
     // --- Treinos registrados ---
-    const treinos = Array.isArray(c.treinos) ? c.treinos.slice().sort((a,b)=>(b.inicio||'').localeCompare(a.inicio||'')) : [];
-    const linhasTreino = treinos.map(t => `
-      <tr>
-        <td><span class="badge">${escapeHTML(t.programa)}</span></td>
-        <td>${t.inicio} → ${t.vencimento}</td>
-        <td><span class="status ${t.status==='Ativo'?'st-ok':'st-bad'}">${t.status||'-'}</span></td>
-        <td>${escapeHTML(t.obs || '')}</td>
-      </tr>
-    `).join('');
+    const treinos = Array.isArray(c.treinos)
+      ? c.treinos.slice().sort((a,b)=>(b.data_inicio||'').localeCompare(a.data_inicio||''))
+      : [];
 
-    // Badges de nível sugerido / prontidão / elegibilidade
+    const linhasTreino = treinos.map(t => {
+      const status = calcStatusTreino(t); // Ativo ou Vencido
+      return `
+        <tr>
+          <td><span class="badge">${escapeHTML(t.programa || '-')}</span></td>
+          <td>${t.data_inicio || '-'} → ${t.data_venc || '-'}</td>
+          <td><span class="status ${status==='Ativo'?'st-ok':'st-bad'}">${status}</span></td>
+          <td>${escapeHTML(t.observacao || '')}</td>
+          <td style="text-align:right">
+            <button class="btn btn-outline btn-del-treino" data-treino="${escapeHTML(t.id || '')}">Excluir</button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    // Badges
     const sugerido = c.sugestaoNivel ? `<span class="badge" style="background:#2b6777">sugerido: ${c.sugestaoNivel}</span>` : '';
     const readyTag = c.readiness ? `<span class="badge" style="background:${badgeColor(c.readiness)}">${c.readiness}</span>` : '';
     const elegivel = c.elegivelPromocao ? `<span class="badge" style="background:#7cb342">elegível</span>` : '';
     const prontasN = c.prontaConsecutivas ? `<small style="opacity:.75">(${c.prontaConsecutivas} reavaliaç${c.prontaConsecutivas>1?'ões':'ão'} prontas seguidas)</small>` : '';
 
-    // CTA do Professor (pré-preenchido se a URL existir)
+    // CTAs
     const linkProfessor = (PROFESSOR_FORM_URL && c.id)
       ? `${PROFESSOR_FORM_URL}?id=${encodeURIComponent(c.id)}&nome=${encodeURIComponent(c.nome||'')}`
       : '';
     const ctaProfessor = linkProfessor
       ? `<a class="btn btn-primary" href="${linkProfessor}" target="_blank" rel="noopener">📋 Formulário do Professor</a>`
       : `<button class="btn btn-outline" id="professorFormBtn" title="Defina PROFESSOR_FORM_URL no app.js">📋 Formulário do Professor</button>`;
+    const ctaRelatorio = `<a class="btn btn-outline" href="#/relatorio/${c.id}">🧾 Relatório PDF</a>`;
 
     return `
       <section class="card">
@@ -79,8 +89,9 @@ export const ClienteView = {
         ${c.cidade  ? `<p><b>Cidade/Estado:</b> ${escapeHTML(c.cidade)}</p>` : ''}
         ${c.email   ? `<p><b>E-mail:</b> ${escapeHTML(c.email)}</p>` : ''}
         ${c.contato ? `<p><b>WhatsApp:</b> ${escapeHTML(c.contato)}</p>` : ''}
-        <div class="row" style="gap:10px;margin-top:12px">
+        <div class="row" style="gap:10px;margin-top:12px;flex-wrap:wrap">
           ${ctaProfessor}
+          ${ctaRelatorio}
         </div>
       </section>
 
@@ -91,8 +102,10 @@ export const ClienteView = {
         </div>
         ${treinos.length === 0 ? `<div style="color:#aaa;margin-top:8px">Nenhum treino registrado ainda.</div>` : `
           <div style="overflow:auto;margin-top:8px">
-            <table class="table">
-              <thead><tr><th>Programa</th><th>Período</th><th>Status</th><th>Obs.</th></tr></thead>
+            <table class="table" style="min-width:720px">
+              <thead>
+                <tr><th>Programa</th><th>Período</th><th>Status</th><th>Obs.</th><th style="text-align:right">Ações</th></tr>
+              </thead>
               <tbody>${linhasTreino}</tbody>
             </table>
           </div>
@@ -109,7 +122,7 @@ export const ClienteView = {
         </table>
       </section>
 
-      <!-- gráficos mantidos -->
+      <!-- gráficos -->
       <section class="card chart-card">
         <h3>Evolução do Peso (kg)</h3>
         <div id="pesoEmpty" style="display:none;color:#aaa">Sem dados de peso suficientes.</div>
@@ -154,6 +167,21 @@ export const ClienteView = {
         alert('Defina PROFESSOR_FORM_URL no app.js para abrir o Formulário do Professor com ID/nome.');
       });
     }
+
+    // Excluir treino
+    document.querySelectorAll('.btn-del-treino').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tid = btn.getAttribute('data-treino');
+        if (!tid) return;
+        const ok = confirm('Remover este treino? Esta ação não pode ser desfeita.');
+        if (!ok) return;
+        const cli = Store.byId(id);
+        if (!cli || !Array.isArray(cli.treinos)) return;
+        cli.treinos = cli.treinos.filter(t => String(t.id) !== String(tid));
+        Store.upsert(cli);
+        location.hash = `#/cliente/${id}`;
+      });
+    });
 
     // ===== Peso =====
     const pesoCtx = document.getElementById('chartPeso');
@@ -260,4 +288,12 @@ function badgeColor(readiness){
   if (readiness === 'Pronta para subir') return '#2e7d32';
   if (readiness === 'Quase lá') return '#f9a825';
   return '#455a64';
+}
+
+function calcStatusTreino(t){
+  const hoje = new Date(); hoje.setHours(12,0,0,0);
+  const dIni = t?.data_inicio ? new Date(`${t.data_inicio}T12:00:00`) : null;
+  const dVen = t?.data_venc   ? new Date(`${t.data_venc}T12:00:00`)   : null;
+  if (dIni && dVen && dIni <= hoje && hoje <= dVen) return 'Ativo';
+  return 'Vencido';
 }
