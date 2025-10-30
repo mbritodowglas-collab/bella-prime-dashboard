@@ -57,7 +57,7 @@ export const ClienteView = {
     const elegivel = c.elegivelPromocao ? `<span class="badge" style="background:#7cb342">elegível</span>` : '';
     const prontasN = c.prontaConsecutivas ? `<small style="opacity:.75">(${c.prontaConsecutivas} reavaliaç${c.prontaConsecutivas>1?'ões':'ão'} prontas seguidas)</small>` : '';
 
-    // CTA do Professor (pré-preenchido se a URL existir)
+    // CTA do Professor (pré-preenchido com id/nome simples)
     const linkProfessor = (PROFESSOR_FORM_URL && c.id)
       ? `${PROFESSOR_FORM_URL}?id=${encodeURIComponent(c.id)}&nome=${encodeURIComponent(c.nome||'')}`
       : '';
