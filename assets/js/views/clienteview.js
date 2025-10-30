@@ -51,6 +51,33 @@ export const ClienteView = {
          </p>`
       : '';
 
+    // Treinos recentes
+    const treinos = Array.isArray(c.treinos) ? c.treinos.slice().sort((a,b)=> (a.data||'').localeCompare(b.data||'')) : [];
+    const blocoTreinos = `
+      <section class="card">
+        <div class="row" style="justify-content:space-between;align-items:center;gap:10px;">
+          <h3 style="margin:0">Treinos recentes</h3>
+          <button class="btn btn-primary" id="novoTreinoBtn">+ Adicionar Treinamento</button>
+        </div>
+        ${treinos.length === 0 ? `
+          <div style="color:#aaa;margin-top:8px;">Nenhum treino registrado ainda.</div>
+        ` : `
+          <table class="table" style="margin-top:10px;">
+            <thead><tr><th>Data</th><th>Título</th><th>Notas</th></tr></thead>
+            <tbody>
+              ${treinos.map(t => `
+                <tr>
+                  <td>${escapeHTML(t.data || '-')}</td>
+                  <td>${escapeHTML(t.titulo || '-')}</td>
+                  <td>${escapeHTML(t.notas || '-')}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `}
+      </section>
+    `;
+
     return `
       <section class="card">
         <a href="#/" class="btn btn-outline" style="margin-bottom:10px;">← Voltar</a>
@@ -66,6 +93,7 @@ export const ClienteView = {
       </section>
 
       ${blocoRespostas}
+      ${blocoTreinos}
 
       <section class="card">
         <h3>Histórico de Avaliações</h3>
@@ -93,10 +121,6 @@ export const ClienteView = {
         <canvas id="chartWHtR" height="160"></canvas>
         <small style="opacity:.75">Linha guia 0,50 = meta de saúde (cintura &lt; 50% da estatura).</small>
       </section>
-
-      <section class="card">
-        <button class="btn btn-primary" id="novaAvaliacaoBtn">+ Nova Avaliação</button>
-      </section>
     `;
   },
 
@@ -113,6 +137,30 @@ export const ClienteView = {
         document.execCommand('copy');
         copyBtn.textContent = 'Copiado!';
         setTimeout(()=> copyBtn.textContent = 'Copiar lista', 1200);
+      });
+    }
+
+    // ===== Adicionar Treinamento (prompt) =====
+    const novoBtn = document.getElementById('novoTreinoBtn');
+    if (novoBtn){
+      novoBtn.addEventListener('click', () => {
+        const data = prompt('Data do treino (AAAA-MM-DD):', todayISO());
+        if (!data) return;
+
+        const titulo = prompt('Título/Identificador (ex.: Ficha B — Lower, HIIT 20min):', '');
+        if (titulo === null) return; // cancelou
+
+        const notas = prompt('Notas rápidas (carga, reps, percepção de esforço, ajustes):', '');
+        if (notas === null) return;
+
+        const treinos = Array.isArray(c.treinos) ? c.treinos.slice() : [];
+        treinos.push({ data, titulo, notas });
+
+        const updated = { ...c, treinos: treinos.sort((a,b)=> (a.data||'').localeCompare(b.data||'')) };
+        Store.upsert(updated);
+
+        alert('Treinamento adicionado.');
+        location.hash = `#/cliente/${c.id}`; // recarrega a view
       });
     }
 
@@ -146,7 +194,7 @@ export const ClienteView = {
       if (pesoEmpty) pesoEmpty.style.display = 'none';
     } else if (pesoEmpty) { pesoEmpty.style.display = 'block'; }
 
-    // ===== RCQ (cintura/quadril) =====
+    // ===== RCQ =====
     const rcqCtx = document.getElementById('chartRCQ');
     const rcqEmpty = document.getElementById('rcqEmpty');
     const serieRCQ = (c.avaliacoes || [])
@@ -184,7 +232,7 @@ export const ClienteView = {
       if (rcqEmpty) rcqEmpty.style.display = 'none';
     } else if (rcqEmpty) { rcqEmpty.style.display = 'block'; }
 
-    // ===== WHtR (cintura/estatura) =====
+    // ===== WHtR =====
     const whtrCtx = document.getElementById('chartWHtR');
     const whtrEmpty = document.getElementById('whtrEmpty');
 
@@ -192,7 +240,7 @@ export const ClienteView = {
       .map(a => {
         const cintura = toNum(a.cintura);
         let altura = toNum(a.altura); // aceita cm ou m
-        if (isNum(altura) && altura <= 3) altura = altura * 100; // metros -> cm
+        if (isNum(altura) && altura <= 3) altura = altura * 100; // m -> cm
         const whtr = isNum(a.whtr)
           ? Number(a.whtr)
           : (isNum(cintura) && isNum(altura) && altura !== 0 ? Number(cintura) / Number(altura) : undefined);
@@ -220,7 +268,6 @@ export const ClienteView = {
               pointRadius: 4,
               pointHoverRadius: 6
             },
-            // Linha guia em 0.50
             {
               label: 'Guia 0.50',
               data: labels.map(() => 0.5),
@@ -241,10 +288,6 @@ export const ClienteView = {
       });
       if (whtrEmpty) whtrEmpty.style.display = 'none';
     } else if (whtrEmpty) { whtrEmpty.style.display = 'block'; }
-
-    // Nova avaliação
-    const btn = document.getElementById('novaAvaliacaoBtn');
-    if (btn) btn.addEventListener('click', () => { location.hash = `#/avaliacao/${id}`; });
   }
 };
 
@@ -261,4 +304,9 @@ function isNum(v){ return typeof v === 'number' && !isNaN(v); }
 function toNum(v){
   const n = Number(v);
   return (typeof n === 'number' && !isNaN(n)) ? n : undefined;
+}
+function todayISO(){
+  const d = new Date();
+  const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), da=String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${da}`;
 }
