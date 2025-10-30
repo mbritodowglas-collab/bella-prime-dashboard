@@ -44,10 +44,13 @@ export const ClienteView = {
     const treinos = Array.isArray(c.treinos) ? c.treinos.slice().sort((a,b)=>(b.inicio||'').localeCompare(a.inicio||'')) : [];
     const linhasTreino = treinos.map(t => `
       <tr>
-        <td><span class="badge">${escapeHTML(t.programa)}</span></td>
-        <td>${t.inicio} → ${t.vencimento}</td>
+        <td><span class="badge">${escapeHTML(t.programa || '-')}</span></td>
+        <td>${t.inicio || '-'} → ${t.vencimento || '-'}</td>
         <td><span class="status ${t.status==='Ativo'?'st-ok':'st-bad'}">${t.status||'-'}</span></td>
-        <td>${escapeHTML(t.obs || '')}</td>
+        <td>${escapeHTML(t.obs || t.observacao || '')}</td>
+        <td style="text-align:right">
+          <button class="btn btn-outline btn-del-treino" data-treino="${escapeHTML(t.id || '')}">Excluir</button>
+        </td>
       </tr>
     `).join('');
 
@@ -92,7 +95,9 @@ export const ClienteView = {
         ${treinos.length === 0 ? `<div style="color:#aaa;margin-top:8px">Nenhum treino registrado ainda.</div>` : `
           <div style="overflow:auto;margin-top:8px">
             <table class="table">
-              <thead><tr><th>Programa</th><th>Período</th><th>Status</th><th>Obs.</th></tr></thead>
+              <thead>
+                <tr><th>Programa</th><th>Período</th><th>Status</th><th>Obs.</th><th style="text-align:right">Ações</th></tr>
+              </thead>
               <tbody>${linhasTreino}</tbody>
             </table>
           </div>
@@ -154,6 +159,21 @@ export const ClienteView = {
         alert('Defina PROFESSOR_FORM_URL no app.js para abrir o Formulário do Professor com ID/nome.');
       });
     }
+
+    // Excluir treino (delegação por botão)
+    document.querySelectorAll('.btn-del-treino').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tid = btn.getAttribute('data-treino');
+        if (!tid) return;
+        const ok = confirm('Remover este treino? Esta ação não pode ser desfeita.');
+        if (!ok) return;
+        const cli = Store.byId(id);
+        if (!cli || !Array.isArray(cli.treinos)) return;
+        cli.treinos = cli.treinos.filter(t => String(t.id) !== String(tid));
+        Store.upsert(cli);
+        location.hash = `#/cliente/${id}`;
+      });
+    });
 
     // ===== Peso =====
     const pesoCtx = document.getElementById('chartPeso');
@@ -261,3 +281,4 @@ function badgeColor(readiness){
   if (readiness === 'Quase lá') return '#f9a825';
   return '#455a64';
 }
+```0
