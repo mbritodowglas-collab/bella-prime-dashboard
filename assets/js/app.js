@@ -31,6 +31,14 @@ const pick = (obj, keys) => {
   for (const k of keys) if (obj[k] !== undefined && obj[k] !== '') return obj[k];
   return undefined;
 };
+const normNivel = (x='') => {
+  const n = strip(x);
+  if (n.startsWith('fund')) return 'Fundação';
+  if (n.startsWith('asc'))  return 'Ascensão';
+  if (n.startsWith('dom'))  return 'Domínio';
+  if (n.startsWith('over')) return 'OverPrime';
+  return '';
+};
 
 // Coleta todas as respostas do Sheets (para consulta completa no perfil)
 function collectAnswersFromRaw(raw){
@@ -48,7 +56,12 @@ function collectAnswersFromRaw(raw){
     // métricas que já extraímos separadamente
     'peso','peso (kg)','peso kg',
     'cintura','cintura (cm)','cintura cm',
-    'quadril','quadril (cm)','quadril cm'
+    'quadril','quadril (cm)','quadril cm',
+    // campos do form do professor (não entram no _answers)
+    'novo_nivel','novonivel','nivel_novo','nivel aprovado','nivel_aprovado',
+    'aprovado','aprovacao','aprovação','aprovacao_professor','ok','apto','apta',
+    'data_decisao','data_upgrade','data_mudanca','data da decisao',
+    'observacao_professor','observacao','comentario'
   ]);
   const norm = s => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
   const out = {};
@@ -155,6 +168,23 @@ export const Store = {
           _answers: collectAnswersFromRaw(raw)
         };
 
+        // --- Detecta linha do Formulário do Professor (upgrade de nível) ---
+        const novoNivelRaw = pick(o, [
+          'novo_nivel','novonivel','nivel_novo','nivel aprovado','nivel_aprovado','nivel_definido'
+        ]);
+        const aprovadoRaw = pick(o, [
+          'aprovado','aprovacao','aprovação','aprovacao_professor','ok','apto','apta'
+        ]);
+        const dataDecRaw  = pick(o, ['data_decisao','data_upgrade','data_mudanca','data da decisao']);
+        const obsProf     = pick(o, ['observacao_professor','observacao','comentario']);
+
+        if (novoNivelRaw) {
+          const aprovado = /^s(?!$)|^sim$|^ok$|^true$|^aprov/i.test(String(aprovadoRaw||''));
+          const novoNivel = normNivel(novoNivelRaw) || novoNivelRaw;
+          const dataUp = (dataDecRaw && /^\d{4}-\d{2}-\d{2}$/.test(String(dataDecRaw))) ? String(dataDecRaw) : todayISO();
+          base._upgradeEvent = { aprovado, novoNivel, data: dataUp, obs: obsProf || '' };
+        }
+
         // --- Pontuação automática por respostas (fallback se não há nota explícita) ---
         if ((!pontForm || isNaN(pontForm)) && base._answers && Object.keys(base._answers).length){
           const auto = calcularPontuacao(base._answers);
@@ -191,6 +221,12 @@ export const Store = {
         for (const f of ['nome','contato','email','cidade']) if (!dst[f] && r[f]) dst[f] = r[f];
         dst.avaliacoes = [...(dst.avaliacoes||[]), ...(r.avaliacoes||[])];
         if (!Array.isArray(dst.treinos)) dst.treinos = []; // garante array
+
+        // acumula upgrades do professor
+        if (r._upgradeEvent) {
+          if (!Array.isArray(dst._allUpgrades)) dst._allUpgrades = [];
+          dst._allUpgrades.push(r._upgradeEvent);
+        }
         // não sobrescreve _answers; mantém o primeiro
       }
 
@@ -202,15 +238,27 @@ export const Store = {
           const last = c.avaliacoes[c.avaliacoes.length-1];
           if (last) {
             c.pontuacao    = (typeof last.pontuacao === 'number') ? last.pontuacao : c.pontuacao;
-            // OBS: nível permanece o atual; reavaliação não muda nível
+            // OBS: nível permanece o atual por reavaliação
             c.ultimoTreino = c.ultimoTreino || last.data;
             c.sugestaoNivel = last.sugestaoNivel;
             c.readiness = last.readiness;
           }
 
-        // conta consecutivas "Pronta para subir"
+          // conta consecutivas "Pronta para subir"
           c.prontaConsecutivas = contarProntasSeguidas(c.avaliacoes);
           c.elegivelPromocao   = c.prontaConsecutivas >= 2;
+        }
+
+        // aplica último upgrade aprovado do professor (se houver)
+        const ups = (c._allUpgrades || []).filter(u => u && u.aprovado);
+        if (ups.length){
+          ups.sort((a,b)=> (a.data||'').localeCompare(b.data||'')); // mais antigo -> mais novo
+          const lastUp = ups[ups.length-1];
+          if (lastUp.novoNivel){
+            c.nivel = normNivel(lastUp.novoNivel) || lastUp.novoNivel;
+            c.upgradeEm  = lastUp.data;
+            c.upgradeObs = lastUp.obs || '';
+          }
         }
       }
 
