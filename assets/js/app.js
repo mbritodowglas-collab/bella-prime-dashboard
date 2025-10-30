@@ -145,7 +145,7 @@ export const Store = {
           ultimoTreino: dataAval || undefined,
           renovacaoDias: Number(pick(o,['renovacaodias','renovacao','ciclodias'])) || 30,
           avaliacoes: [],
-          treinos: [], // <<< NOVO: histórico de treinos lançados
+          treinos: [], // <<< histórico de treinos lançados
           _answers: collectAnswersFromRaw(raw)
         };
 
@@ -232,15 +232,31 @@ export function statusCalc(c){
   return            { label:'Vencida',              klass:'st-bad'  };
 }
 
-// ---------- Programas permitidos por nível (para a página de lançamento) ----------
+// ---------- Programas permitidos por nível ----------
 export function programsByLevel(nivel){
   switch (nivel) {
-    case 'Fundação': return ['ABC','ABCD'];                 // seu requisito
-    case 'Ascensão': return ['ABCD','ABCDE'];               // sugestão
-    case 'Domínio' : return ['ABCD','ABCDE','ABCDEF'];      // sugestão
-    case 'OverPrime': return ['ABCDE','ABCDEF'];            // sugestão
+    case 'Fundação': return ['ABC','ABCD'];                 // requisito
+    case 'Ascensão': return ['ABC','ABCD'];                 // pode abrir depois
+    case 'Domínio' : return ['ABC','ABCD','ABCDE','ABCDEF'];
+    case 'OverPrime': return ['ABC','ABCD','ABCDE','ABCDEF'];
     default: return ['ABC','ABCD'];
   }
+}
+
+// ---------- Intensidades (para Domínio/OverPrime) ----------
+const INTENSIDADES_AVANCADAS = [
+  'Base Intermediária (≈65–70%)',
+  'Densidade / Hipertrofia (≈70–75%)',
+  'Força Relativa (≈75–85%)',
+  'Lapidação / Refinamento (≈75–80%)'
+];
+
+export function intensitiesByLevel(nivel){
+  if (!nivel) return null;
+  if (String(nivel).startsWith('Dom') || String(nivel).startsWith('Over')) {
+    return INTENSIDADES_AVANCADAS.slice();
+  }
+  return null; // níveis iniciais não pedem intensidade
 }
 
 // ---------- Router ----------
