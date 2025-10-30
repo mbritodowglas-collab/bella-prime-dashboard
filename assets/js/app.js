@@ -6,7 +6,8 @@ import { DashboardView } from './views/dashboardview.js';
 import { ClienteView }   from './views/clienteview.js';
 import { AvaliacaoView } from './views/avaliacaoview.js';
 import { TreinoView }    from './views/treinoview.js';
-import { RelatorioView } from './views/relatorioview.js'; // PDF + gráficos
+import { RelatorioView } from './views/relatorioview.js';
+import { TemplatesView } from './views/templatesview.js'; // <<< NOVO
 
 const SHEETS_API = 'https://script.google.com/macros/s/AKfycbyAafbpJDWr4RF9hdTkzmnLLv1Ge258hk6jlnDo7ng2kk88GoWyJzp63rHZPMDJA-wy/exec';
 
@@ -57,11 +58,9 @@ function collectAnswersFromRaw(raw){
     'pontuacao','pontuação','score','pontos','nota',
     'ultimotreino','ultimaavaliacao','dataavaliacao','data',
     'renovacaodias','renovacao','ciclodias',
-    // métricas extraídas separadamente
     'peso','peso (kg)','peso kg',
     'cintura','cintura (cm)','cintura cm',
     'quadril','quadril (cm)','quadril cm',
-    // campos do form do professor
     'novo_nivel','novonivel','nivel_novo','nivel aprovado','nivel_aprovado','nivel_definido',
     'aprovado','aprovacao','aprovação','aprovacao_professor','ok','apto','apta',
     'data_decisao','data_upgrade','data_mudanca','data da decisao',
@@ -107,7 +106,6 @@ export const Store = {
     try{
       const brutos = await loadSeed();
 
-      // normaliza chaves (sem acentos)
       const normRow = (raw) => {
         const o = {};
         for (const [k, v] of Object.entries(raw || {})) o[strip(k)] = v;
@@ -117,23 +115,19 @@ export const Store = {
       const registros = (brutos || []).map(raw => {
         const o = normRow(raw);
 
-        // Identificação
         const nome = pick(o, ['nome','nome completo','seu nome','qual e o seu nome','qual seu nome','aluna','cliente']);
         const contato = pick(o, ['contato','whatsapp','telefone']);
         const email   = pick(o, ['email','e-mail','mail']);
         const id      = String(pick(o, ['id','uid','usuario']) || contato || email || cryptoId());
 
-        // Cidade/Estado
         const cidade = pick(o, [
           'cidade-estado','cidade - estado','cidade/estado','cidade uf','cidadeuf','cidade'
         ]) || '';
 
-        // Avaliação base (data/nivel/pontuacao)
         const dataAval = pick(o, ['data','dataavaliacao','ultimotreino']);
         const pontForm = Number(pick(o, ['pontuacao','pontuação','score','nota']) || 0);
         const nivelIn  = pick(o, ['nivel','nível','fase','faixa']);
 
-        // ---- MÉTRICAS ANTROPOMÉTRICAS ----
         const pesoRaw    = pick(o, ['peso','peso (kg)','peso kg']);
         const cinturaRaw = pick(o, ['cintura','cintura (cm)','cintura cm']);
         const quadrilRaw = pick(o, ['quadril','quadril (cm)','quadril cm']);
@@ -143,13 +137,9 @@ export const Store = {
         const quadril = (quadrilRaw !== undefined && quadrilRaw !== '') ? Number(String(quadrilRaw).replace(',', '.')) : undefined;
         const rcq = (cintura && quadril && quadril !== 0) ? (cintura / quadril) : undefined;
 
-        // nível default (fallback)
         const nivelDefault = (() => {
-          const n = strip(nivelIn || '');
-          if (n.startsWith('fund')) return 'Fundação';
-          if (n.startsWith('asc'))  return 'Ascensão';
-          if (n.startsWith('dom'))  return 'Domínio';
-          if (n.startsWith('over')) return 'OverPrime';
+          const n = normNivel(nivelIn || '');
+          if (n) return n;
           if (pontForm <= 2)  return 'Fundação';
           if (pontForm <= 6)  return 'Ascensão';
           return 'Domínio';
@@ -170,7 +160,7 @@ export const Store = {
           _answers: collectAnswersFromRaw(raw)
         };
 
-        // --- Upgrade de nível (form do professor) ---
+        // upgrade do professor
         const novoNivelRaw = pick(o, [
           'novo_nivel','novonivel','nivel_novo','nivel aprovado','nivel_aprovado','nivel_definido'
         ]);
@@ -187,14 +177,12 @@ export const Store = {
           base._upgradeEvent = { aprovado, novoNivel, data: dataUp, obs: obsProf || '' };
         }
 
-        // --- Pontuação automática por respostas (fallback)
         if ((!pontForm || isNaN(pontForm)) && base._answers && Object.keys(base._answers).length){
           const auto = calcularPontuacao(base._answers);
           base.pontuacao = auto;
           base.nivel = nivelPorPontuacao(auto);
         }
 
-        // adiciona avaliação com métricas
         if (dataAval || !isNaN(base.pontuacao) || peso !== undefined || cintura !== undefined || quadril !== undefined) {
           const dataISO = /^\d{4}-\d{2}-\d{2}$/.test(String(dataAval)) ? String(dataAval) : todayISO();
           const sugestaoNivel = nivelPorPontuacao(base.pontuacao);
@@ -215,7 +203,6 @@ export const Store = {
         return base;
       });
 
-      // colapsa por id
       const map = new Map();
       for (const r of registros) {
         if (!map.has(r.id)) { map.set(r.id, r); continue; }
@@ -229,7 +216,6 @@ export const Store = {
         }
       }
 
-      // ordena e computa derivados
       const list = [...map.values()];
       for (const c of list) {
         if (Array.isArray(c.avaliacoes)) {
@@ -245,7 +231,6 @@ export const Store = {
           c.elegivelPromocao   = c.prontaConsecutivas >= 2;
         }
 
-        // aplica último upgrade aprovado
         const ups = (c._allUpgrades || []).filter(u => u && u.aprovado);
         if (ups.length){
           ups.sort((a,b)=> (a.data||'').localeCompare(b.data||''));
@@ -311,7 +296,7 @@ export function programsByLevel(nivel){
   }
 }
 
-// ---------- Intensidades (Domínio/OverPrime) ----------
+// ---------- Intensidades ----------
 const INTENSIDADES_AVANCADAS = [
   'Base Intermediária (≈65–70%)',
   'Densidade / Hipertrofia (≈70–75%)',
@@ -354,7 +339,6 @@ export function calcularPontuacao(respostas) {
 }
 
 export function nivelPorPontuacao(score) {
-  // ≤3.5 Fundação | 3.6–5.9 Ascensão | ≥6 Domínio
   if (score <= 3.5) return 'Fundação';
   if (score <= 5.9) return 'Ascensão';
   return 'Domínio';
@@ -384,6 +368,7 @@ const routes = [
   { path: new RegExp('^#\\/avaliacao\\/' + idRe + '$'), view: AvaliacaoView },
   { path: new RegExp('^#\\/treino\\/' + idRe + '\\/novo$'), view: TreinoView },
   { path: new RegExp('^#\\/relatorio\\/' + idRe + '$'), view: RelatorioView },
+  { path: new RegExp('^#\\/templates$'),                view: TemplatesView }, // <<< NOVO
 ];
 
 async function render(){
@@ -396,9 +381,33 @@ async function render(){
   }
   app.innerHTML = await View.template(...params);
   if (View.init) await View.init(...params);
+
+  // Botão flutuante "Templates" somente no Dashboard
+  if (View === DashboardView) injectTemplatesFAB();
+  else removeTemplatesFAB();
 }
 
 window.addEventListener('hashchange', render);
+
+// ---------- FAB Templates ----------
+function injectTemplatesFAB(){
+  removeTemplatesFAB();
+  const btn = document.createElement('a');
+  btn.id = 'bp-fab-templates';
+  btn.href = '#/templates';
+  btn.textContent = 'Templates';
+  Object.assign(btn.style, {
+    position:'fixed', right:'16px', bottom:'18px',
+    background:'#c62828', color:'#fff', padding:'12px 16px',
+    borderRadius:'9999px', fontWeight:'700', textDecoration:'none',
+    boxShadow:'0 6px 20px rgba(0,0,0,.35)', zIndex:'9999'
+  });
+  document.body.appendChild(btn);
+}
+function removeTemplatesFAB(){
+  const el = document.getElementById('bp-fab-templates');
+  if (el) el.remove();
+}
 
 // ---------- Boot ----------
 (async () => {
