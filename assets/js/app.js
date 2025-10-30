@@ -6,17 +6,17 @@ import { DashboardView } from './views/dashboardview.js';
 import { ClienteView }   from './views/clienteview.js';
 import { AvaliacaoView } from './views/avaliacaoview.js';
 import { TreinoView }    from './views/treinoview.js';
-import { RelatorioView } from './views/relatorioview.js';
-import { TemplatesView } from './views/templatesview.js'; // <<< NOVO
+import { RelatorioView } from './views/relatorioview.js'; // <<< NOVO (PDF/link externo)
 
 const SHEETS_API = 'https://script.google.com/macros/s/AKfycbyAafbpJDWr4RF9hdTkzmnLLv1Ge258hk6jlnDo7ng2kk88GoWyJzp63rHZPMDJA-wy/exec';
 
 // ---- Configurações de integrações/branding ----
+// Google Forms (pré-preencher com ?id=&nome=)
 export const PROFESSOR_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLScvQBCSEVdTspYgelGI0zWbrK21ttO1IUKuf9_j5rO_a2czfA/viewform?usp=header';
 
-// Logo em PNG usada pelo relatório (confira o caminho na sua pasta /assets)
-export const RELATORIO_LOGO_PNG = './assets/img/logo-mdpersonal.png';
-export const BRAND_NAME = 'Márcio Dowglas Trainer';
+// Logo em PNG para o relatório PDF (ajuste o caminho do arquivo conforme sua pasta de assets)
+export const RELATORIO_LOGO_PNG = './assets/img/logo-mdpersonal.png'; // <<< PNG
+export const BRAND_NAME = 'Márcio Dowglas Trainer'; // aparece no cabeçalho do relatório
 
 // ---------- Datas ----------
 const todayISO = () => {
@@ -49,23 +49,21 @@ const normNivel = (x='') => {
 function collectAnswersFromRaw(raw){
   if (!raw) return {};
   const ignore = new Set([
-    // identificação
     'id','identificador','uid','usuario',
     'nome','nome completo','seu nome','qual e o seu nome','qual seu nome','aluna','cliente','paciente',
     'contato','whatsapp','whats','telefone',
     'email','e-mail','mail',
     'cidade-estado','cidade - estado','cidade/estado','cidade_estado','cidade-uf','cidade uf','cidadeuf','cidade',
-    // status/nivel
     'nivel','nível','nivelatual','fase','faixa',
     'pontuacao','pontuação','score','pontos','nota',
     'ultimotreino','ultimaavaliacao','dataavaliacao','data',
     'renovacaodias','renovacao','ciclodias',
-    // métricas
+    // métricas que já extraímos separadamente
     'peso','peso (kg)','peso kg',
     'cintura','cintura (cm)','cintura cm',
     'quadril','quadril (cm)','quadril cm',
-    // form do professor
-    'novo_nivel','novonivel','nivel_novo','nivel aprovado','nivel_aprovado','nivel_definido',
+    // campos do form do professor (não entram no _answers)
+    'novo_nivel','novonivel','nivel_novo','nivel aprovado','nivel_aprovado',
     'aprovado','aprovacao','aprovação','aprovacao_professor','ok','apto','apta',
     'data_decisao','data_upgrade','data_mudanca','data da decisao',
     'observacao_professor','observacao','comentario'
@@ -87,11 +85,13 @@ async function loadSeed(){
     if(!r.ok) throw new Error(`Sheets HTTP ${r.status}`);
     const data = await r.json();
     if(!Array.isArray(data)) throw new Error('Sheets retornou formato inválido');
+    console.log('Sheets OK:', data.length);
     return data;
   }catch(e){
     console.warn('Sheets falhou, usando seed.json:', e);
     const r2 = await fetch('./assets/data/seed.json', { cache:'no-store' });
     const data = await r2.json();
+    console.log('seed.json:', Array.isArray(data) ? data.length : 0);
     return data;
   }
 }
@@ -146,10 +146,13 @@ export const Store = {
         const quadril = (quadrilRaw !== undefined && quadrilRaw !== '') ? Number(String(quadrilRaw).replace(',', '.')) : undefined;
         const rcq = (cintura && quadril && quadril !== 0) ? (cintura / quadril) : undefined;
 
-        // nível default (mantém tua lógica)
+        // nível default (mantém tua lógica base)
         const nivelDefault = (() => {
-          const n = normNivel(nivelIn || '');
-          if (n) return n;
+          const n = strip(nivelIn || '');
+          if (n.startsWith('fund')) return 'Fundação';
+          if (n.startsWith('asc'))  return 'Ascensão';
+          if (n.startsWith('dom'))  return 'Domínio';
+          if (n.startsWith('over')) return 'OverPrime';
           if (pontForm <= 2)  return 'Fundação';
           if (pontForm <= 6)  return 'Ascensão';
           return 'Domínio';
@@ -240,7 +243,7 @@ export const Store = {
           const last = c.avaliacoes[c.avaliacoes.length-1];
           if (last) {
             c.pontuacao    = (typeof last.pontuacao === 'number') ? last.pontuacao : c.pontuacao;
-            // nível permanece o atual por reavaliação
+            // OBS: nível permanece o atual por reavaliação
             c.ultimoTreino = c.ultimoTreino || last.data;
             c.sugestaoNivel = last.sugestaoNivel;
             c.readiness = last.readiness;
@@ -306,7 +309,7 @@ export function statusCalc(c){
   return            { label:'Vencida',              klass:'st-bad'  };
 }
 
-// ---------- Programas por nível ----------
+// ---------- Programas permitidos por nível ----------
 export function programsByLevel(nivel){
   switch (nivel) {
     case 'Fundação': return ['ABC','ABCD'];
@@ -393,8 +396,7 @@ const routes = [
   { path: new RegExp('^#\\/cliente\\/' + idRe + '$'),   view: ClienteView   },
   { path: new RegExp('^#\\/avaliacao\\/' + idRe + '$'), view: AvaliacaoView },
   { path: new RegExp('^#\\/treino\\/' + idRe + '\\/novo$'), view: TreinoView },
-  { path: new RegExp('^#\\/relatorio\\/' + idRe + '$'), view: RelatorioView },
-  { path: new RegExp('^#\\/templates$'),                view: TemplatesView }, // <<< NOVO
+  { path: new RegExp('^#\\/relatorio\\/' + idRe + '$'), view: RelatorioView }, // <<< NOVO
 ];
 
 async function render(){
@@ -407,33 +409,9 @@ async function render(){
   }
   app.innerHTML = await View.template(...params);
   if (View.init) await View.init(...params);
-
-  // Botão flutuante "Templates" somente no Dashboard
-  if (View === DashboardView) injectTemplatesFAB();
-  else removeTemplatesFAB();
 }
 
 window.addEventListener('hashchange', render);
-
-// ---------- FAB Templates ----------
-function injectTemplatesFAB(){
-  removeTemplatesFAB();
-  const btn = document.createElement('a');
-  btn.id = 'bp-fab-templates';
-  btn.href = '#/templates';
-  btn.textContent = 'Templates';
-  Object.assign(btn.style, {
-    position:'fixed', right:'16px', bottom:'18px',
-    background:'#c62828', color:'#fff', padding:'12px 16px',
-    borderRadius:'9999px', fontWeight:'700', textDecoration:'none',
-    boxShadow:'0 6px 20px rgba(0,0,0,.35)', zIndex:'9999'
-  });
-  document.body.appendChild(btn);
-}
-function removeTemplatesFAB(){
-  const el = document.getElementById('bp-fab-templates');
-  if (el) el.remove();
-}
 
 // ---------- Boot ----------
 (async () => {
