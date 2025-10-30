@@ -404,6 +404,76 @@ async function render(){
   if (View.init) await View.init(...params);
 }
 
+/* =========================
+   PATCH DE UI (CSS + tabelas mobile)
+   ========================= */
+const BP_MOBILE_CSS = `
+:root{
+  --bg:#0c0c0e;--card:#121316;--muted:#9aa0a6;--text:#e9eaee;--border:#22252b;
+  --primary:#c62828;--primary-2:#b61f1f;--primary-3:#a31b1b;
+  --ok:#1f8f53;--warn:#c2931a;--bad:#ab2b28;--radius:14px;
+  --shadow:0 6px 24px rgba(0,0,0,.35),0 1px 0 rgba(255,255,255,.02) inset;
+}
+html,body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;font-size:15px;-webkit-tap-highlight-color:transparent;}
+.card{background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.01));border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;box-shadow:var(--shadow);backdrop-filter:saturate(1.1) blur(2px);margin-bottom:14px;}
+.input{width:100%;height:44px;border-radius:12px;padding:0 12px;border:1px solid var(--border);background:#111316;color:var(--text);font-size:.95rem;}
+.input:focus{outline:none;border-color:#3a3f47;box-shadow:0 0 0 2px rgba(198,40,40,.12);}
+.btn{--h:44px;height:var(--h);line-height:var(--h);display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:12px;padding:0 14px;font-weight:600;letter-spacing:.2px;border:1px solid var(--border);background:#14161a;color:var(--text);transition:transform .08s ease,filter .12s ease,background .2s ease,border-color .2s ease;cursor:pointer;text-decoration:none;}
+.btn:hover{filter:brightness(1.08);} .btn:active{transform:translateY(1px);}
+.btn-primary{background:var(--primary);border-color:var(--primary-2);color:#fff;} .btn-primary:hover{background:var(--primary-2);} .btn-primary:active{background:var(--primary-3);}
+.btn-outline{background:transparent;} .btn-danger{background:#a32622;border-color:#8e1f1b;color:#fff;} .btn-success{background:var(--ok);border-color:#1a7b46;color:#fff;}
+.badge{display:inline-block;padding:6px 10px;border-radius:999px;font-weight:700;background:#1a1d22;border:1px solid var(--border);color:#d5d7dc;font-size:.82rem;}
+.status{padding:6px 10px;border-radius:999px;font-weight:700;}
+.st-ok{background:rgba(16,112,64,.25);color:#7ce0b3;border:1px solid rgba(16,112,64,.35);}
+.st-warn{background:rgba(197,147,26,.20);color:#ffd86b;border:1px solid rgba(197,147,26,.35);}
+.st-soon{background:rgba(197,147,26,.12);color:#ffea9a;border:1px solid rgba(197,147,26,.22);}
+.st-bad{background:rgba(171,43,40,.22);color:#ff9e9c;border:1px solid rgba(171,43,40,.32);}
+.table{width:100%;border-collapse:separate;border-spacing:0;min-width:520px;}
+.table thead th{font-weight:700;color:#cfd2d8;text-align:left;padding:10px;}
+.table tbody td{padding:10px;border-top:1px solid var(--border);}
+.table tbody tr:hover{background:rgba(255,255,255,.02);}
+.table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px;}
+@media(max-width:640px){
+  .table{min-width:unset;}
+  .table thead{display:none;}
+  .table tbody tr{display:grid;grid-template-columns:1fr auto;gap:6px;padding:10px;border-top:1px solid var(--border);}
+  .table tbody td{display:flex;justify-content:space-between;align-items:center;border:none;padding:6px 0;}
+  .table tbody td::before{content:attr(data-label);color:var(--muted);font-weight:600;margin-right:12px;}
+}
+.chart-card canvas{max-height:240px;} @media(max-width:640px){.chart-card canvas{max-height:200px;}}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
+`;
+
+function ensureStylesInjected(){
+  if (document.getElementById('bp-mobile-style')) return;
+  const s = document.createElement('style');
+  s.id = 'bp-mobile-style';
+  s.textContent = BP_MOBILE_CSS;
+  document.head.appendChild(s);
+}
+
+// Cria automaticamente data-label nos <td> com base nos <th>
+function enhanceTables(){
+  document.querySelectorAll('table.table').forEach(table=>{
+    const headers = [...table.querySelectorAll('thead th')].map(th=>th.textContent.trim());
+    table.querySelectorAll('tbody tr').forEach(tr=>{
+      [...tr.children].forEach((td,i)=>{
+        if (!td.getAttribute('data-label')) td.setAttribute('data-label', headers[i] || '');
+      });
+    });
+  });
+}
+
+// Hooka o render para aplicar o patch em todas as telas
+const _origRender = render;
+render = async function(){
+  ensureStylesInjected();
+  await _origRender();
+  enhanceTables();
+};
+ensureStylesInjected();
+
+// Eventos de rota
 window.addEventListener('hashchange', render);
 
 // ---------- Boot ----------
