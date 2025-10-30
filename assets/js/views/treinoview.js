@@ -87,22 +87,18 @@ const PARAMS = {
   }
 };
 
-// Intensidades locais para UI:
-// - Fundação/Ascensão: select simples (uma intensidade)
-// - Domínio/OverPrime: checkboxes (sequência)
+// Intensidades locais para UI
 function intensidadesParaNivel_UI(nivel) {
   const n = String(nivel||'').trim();
   const p = PARAMS[n];
   if (!p) return null;
   if (n === 'Fundação') return ['≈50–65% (nível de base)'];
   if (n === 'Ascensão') return p.intensidades;
-  return p.intensidades; // Domínio/OverPrime (usaremos checkboxes)
+  return p.intensidades; // Domínio/OverPrime
 }
 
-// --------- restrições (heurística que tenta evitar “exemplos”) ---------
+// --------- restrições (heurística) ---------
 function extrairRestricoes(ans){
-  // Procurar chaves com “tem”, “possui”, “sofre”, ou perguntas de saúde e valor "sim" / item marcado
-  // Fallback: palavras-chave no valor.
   const linhas = Object.entries(ans||{});
   const picks = [];
   const KW = ['asma','lesão','lesao','dor','lombar','joelho','ombro','tendinite','condromalácia','hernia','hérnia','hipertensão','pressão alta','diabetes','gestação','gravidez','cardíaco','cardiaco'];
@@ -111,7 +107,6 @@ function extrairRestricoes(ans){
     const v = String(vRaw||'').toLowerCase();
     const marcouSim = /(^|\b)(sim|tenho|possuo|diagnosticada|asma)(\b|$)/.test(v);
     const matchKW = KW.find(w => v.includes(w));
-    // evita capturar exemplos quando a resposta diz "ex: asma, hipertensão"
     const pareceExemplo = /(exemplo|ex:|ex\.|por exemplo)/.test(v);
     if ((marcouSim || matchKW) && !pareceExemplo){
       const item = matchKW ? matchKW : (kL.includes('asma') ? 'asma' : null);
@@ -125,7 +120,6 @@ function extrairRestricoes(ans){
 function renderIntensidades(nivel){
   const lista = intensidadesParaNivel_UI(nivel) || [];
   if (nivel === 'Domínio' || nivel === 'OverPrime'){
-    // múltiplas (checkbox), mantém ordem natural
     return `
       <div class="field" id="intWrap">
         <label>Intensidades (escolha a sequência)</label>
@@ -139,7 +133,6 @@ function renderIntensidades(nivel){
         <small style="opacity:.75">A sequência marcada define a ordem dos focos ao longo do período.</small>
       </div>`;
   }
-  // intensidade única (select)
   return `
     <div class="field">
       <label>Intensidade</label>
@@ -155,7 +148,6 @@ export const TreinoView = {
     if (!c) return `<section class="card"><h2>Cliente não encontrada</h2></section>`;
 
     const programas = programsByLevel(c.nivel || 'Fundação');
-
     const hoje = todayISO();
     const venc = addDays(hoje, 28);
 
@@ -193,6 +185,18 @@ export const TreinoView = {
           </div>
         </div>
 
+        <div class="field" style="margin-top:12px">
+          <label>Plano de treino (cole aqui o que você criou/usou no MFIT)</label>
+          <textarea id="planoTxt" rows="14" class="input" placeholder="Ex.:
+DIA A — Inferior (ênfase em quadríceps)
+1) Agachamento hack — 4×8–10 (RPE 8)
+2) Leg press — 4×10–12
+3) Cadeira extensora — 3×12–15 (drop set na última)
+...
+Cardio: LISS 25 min · 60–65% FCR"></textarea>
+          <small style="opacity:.8">Este conteúdo será salvo junto com o lançamento do treino.</small>
+        </div>
+
         <div class="row" style="gap:10px;margin-top:14px">
           <button class="btn btn-primary" id="salvarBtn">Salvar</button>
           <button class="btn btn-danger"  id="promptBtn">⚙️ Gerar Prompt</button>
@@ -207,11 +211,25 @@ export const TreinoView = {
 
     const salvarBtn = document.getElementById('salvarBtn');
     const promptBtn = document.getElementById('promptBtn');
+    const iniInput  = document.getElementById('ini');
+    const venInput  = document.getElementById('ven');
+    const planoTxt  = document.getElementById('planoTxt');
+
+    // auto-ajusta vencimento quando muda o início
+    iniInput?.addEventListener('change', ()=>{
+      venInput.value = addDays(iniInput.value || todayISO(), 28);
+    });
+
+    // auto-grow no textarea
+    const autoGrow = el => { el.style.height='auto'; el.style.height=(el.scrollHeight+4)+'px'; };
+    planoTxt?.addEventListener('input', ()=> autoGrow(planoTxt));
 
     salvarBtn?.addEventListener('click', () => {
       const rec = lerFormulario(c);
       if (!Array.isArray(c.treinos)) c.treinos = [];
       c.treinos.push(rec);
+      // mantém status fresco no dashboard
+      c.ultimoTreino = rec.inicio;
       Store.upsert(c);
       location.hash = `#/cliente/${c.id}`;
     });
@@ -229,26 +247,36 @@ export const TreinoView = {
 // -------- helpers --------
 function lerFormulario(c){
   const programa = document.getElementById('progSel')?.value || 'ABC';
-  const inicio = document.getElementById('ini')?.value || todayISO();
-  const venc = document.getElementById('ven')?.value || addDays(inicio, 28);
-  const obs = document.getElementById('obs')?.value || '';
+  const inicio   = document.getElementById('ini')?.value || todayISO();
+  const venc     = document.getElementById('ven')?.value || addDays(inicio, 28);
+  const obs      = document.getElementById('obs')?.value || '';
+  const plano    = document.getElementById('planoTxt')?.value?.trim() || '';
 
-  let intensidades = null;
+  let intensidadesArr = null;
+  let intensidadeTxt  = '';
+
   if (c.nivel === 'Domínio' || c.nivel === 'OverPrime'){
-    intensidades = Array.from(document.querySelectorAll('.intItem'))
+    intensidadesArr = Array.from(document.querySelectorAll('.intItem'))
       .filter(ch => ch.checked)
       .map(ch => ch.value);
+    intensidadeTxt = intensidadesArr.join(' → ');
   } else {
-    intensidades = [ document.getElementById('intSel')?.value ].filter(Boolean);
+    const unica = document.getElementById('intSel')?.value;
+    intensidadesArr = unica ? [unica] : [];
+    intensidadeTxt = unica || '';
   }
 
+  // usa as mesmas chaves que o ClienteView já exibe
   return {
     id: `t_${Date.now()}`,
-    data_inicio: inicio,
-    data_venc: venc,
     programa,
-    intensidades, // array
-    observacao: obs
+    intensidade: intensidadeTxt,   // string (compatibilidade)
+    intensidades: intensidadesArr, // array (quando houver)
+    inicio,
+    vencimento: venc,
+    status: 'Ativo',
+    obs,
+    plano
   };
 }
 
@@ -262,7 +290,6 @@ function montarPrompt(cliente, treino){
     `• ${c.tipo} — ${c.duracao_min}min · ${c.FCR} · ${c.instrucao}`
   ).join('\n');
 
-  // Intensidade (texto)
   let txtInt = '';
   if (treino.intensidades && treino.intensidades.length){
     if (nivel === 'Domínio' || nivel === 'OverPrime'){
@@ -272,18 +299,17 @@ function montarPrompt(cliente, treino){
     }
   }
 
-  // Cabeçalho
   const linhas = [
     'Você é prescritor do sistema Bella Prime · Evo360.',
     'Gere um PROGRAMA DE TREINO estruturado seguindo as regras do nível.',
     '',
     `Cliente: ${cliente.nome} | Nível: ${nivel}`,
     `Programa: ${treino.programa}`,
-    `Período: ${treino.data_inicio} → ${treino.data_venc}`,
+    `Período: ${treino.inicio} → ${treino.vencimento}`,
     txtInt || null,
     cliente.objetivo ? `Objetivo declarado: ${cliente.objetivo}` : null,
     restr ? `Restrições/atenções: ${restr}` : null,
-    treino.observacao ? `Observações do coach: ${treino.observacao}` : null,
+    treino.obs ? `Observações do coach: ${treino.obs}` : null,
     '',
     'Parâmetros do nível:',
     `- Séries: ${params.series}`,
@@ -306,7 +332,6 @@ function montarPrompt(cliente, treino){
     '- Incluir observações do método quando aplicável (NUNCA explicar o gesto motor).'
   ];
 
-  // Para Domínio/OverPrime: reforço de distribuição temporal
   if (nivel === 'Domínio' || nivel === 'OverPrime'){
     linhas.push(
       '',
