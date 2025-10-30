@@ -1,3 +1,6 @@
+// ================================
+// VIEW: Dashboard
+// ================================
 import { Store, statusCalc } from '../app.js';
 
 let chartRef = null;
@@ -47,7 +50,7 @@ export const DashboardView = {
               <th>Nível</th>
               <th>Vencimento</th>
               <th>Status</th>
-              <th style="width:140px;text-align:right;">Ações</th>
+              <th style="width:180px;text-align:right;">Ações</th> <!-- largura maior -->
             </tr>
           </thead>
           <tbody id="tbody"></tbody>
@@ -104,11 +107,11 @@ export const DashboardView = {
     $('#nivel').addEventListener('change', e => { Store.state.filters.nivel = e.target.value; renderTable(); });
     $('#status').addEventListener('change', e => { Store.state.filters.status = e.target.value; renderTable(); });
 
-    document.getElementById('exportBtn').addEventListener('click', () => Store.exportJSON());
+    document.getElementById('exportBtn').addEventListener('click', () => Store.exportJSON?.());
     document.getElementById('importBtn').addEventListener('click', () => document.getElementById('file').click());
     document.getElementById('file').addEventListener('change', async (e) => {
       const f = e.target.files[0]; if (!f) return;
-      await Store.importJSON(f);
+      await Store.importJSON?.(f);
       chartNiveis();
       renderTable();
       e.target.value = '';
@@ -163,8 +166,11 @@ function rowHTML(c){
       <td>${c.ultimoTreino || '-'}</td>
       <td><span class="status ${status.klass}">${status.label}</span></td>
       <td style="text-align:right;white-space:nowrap;">
-        <a href="#" data-id="${c.id}" class="btn btn-outline" style="padding:4px 8px;">Ver</a>
-        <button class="btn btn-outline btn-del" data-id="${c.id}" data-nome="${escapeHTML(c.nome || '')}" title="Excluir" style="padding:4px 8px;">🗑️</button>
+        <div style="display:inline-flex;gap:8px;">
+          <a href="#" data-id="${c.id}" class="btn btn-outline" style="padding:4px 10px;">Ver</a>
+          <a href="#/relatorio/${c.id}" class="btn btn-outline" style="padding:4px 10px;">🧾 Relatório</a>
+          <button class="btn btn-danger btn-del" data-id="${c.id}" data-nome="${escapeHTML(c.nome || '')}" title="Excluir" style="padding:4px 10px;">🗑️</button>
+        </div>
       </td>
     </tr>`;
 }
@@ -214,7 +220,6 @@ function safeCell(v){
 
 function formatCSV(arr){
   if(!Array.isArray(arr)) return '';
-  // campos comuns (ordenados) — ajuste se quiser outros campos
   const fields = ['id','nome','contato','email','cidade','nivel','pontuacao','ultimoTreino','objetivo'];
   const header = fields.join(',');
   const rows = arr.map(o => fields.map(f => `"${safeCell(o[f])}"`).join(','));
@@ -231,7 +236,6 @@ async function copyToClipboard(text){
     await navigator.clipboard.writeText(text);
     return true;
   } catch(e){
-    // fallback: criar textarea temporário
     const ta = document.createElement('textarea');
     ta.value = text;
     document.body.appendChild(ta);
@@ -246,7 +250,7 @@ function escapeHTML(s){
   return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 }
 
-// ---------- toast simples (reaproveitado) ----------
+// ---------- toast simples ----------
 let toastT = null;
 function toast(msg, error=false){
   let el = document.getElementById('toast');
