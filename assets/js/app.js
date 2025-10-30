@@ -1,49 +1,37 @@
-// =======================================
-// Bella Prime · app.js
-// Mantém API para as views, com correções pontuais
-// =======================================
+// =====================================
+// BELLA PRIME · APP PRINCIPAL (com respostas completas + métricas antropométricas)
+// =====================================
 
-// ---------- Constantes de marca e assets exportadas (usadas em Relatório/Views)
-export const BRAND_NAME = 'Bella Prime';
-export const RELATORIO_LOGO_PNG = './assets/img/logo-relatorio.png'; // mantenha seu caminho
+import { DashboardView } from './views/dashboardview.js';
+import { ClienteView }   from './views/clienteview.js';
+import { AvaliacaoView } from './views/avaliacaoview.js';
+import { TreinoView }    from './views/treinoview.js'; // <<< NOVO
 
-// ---------- Config de dados
-export const SHEETS_API =
-  'https://script.google.com/macros/s/AKfycbyAafbpJDWr4RF9hdTkzmnLLv1Ge258hk6jlnDo7ng2kk88GoWyJzp63rHZPMDJA-wy/exec';
+const SHEETS_API = 'https://script.google.com/macros/s/AKfycbyAafbpJDWr4RF9hdTkzmnLLv1Ge258hk6jlnDo7ng2kk88GoWyJzp63rHZPMDJA-wy/exec';
 
-// ---------- Catálogo de programas por nível (mantido para compatibilidade)
-export const programsByLevel = {
-  'Fundação': { series: 3, reps: '12–15', descanso: '45–75s', pct1RM: '50–65%' },
-  'Ascensão': { series: 3–4, reps: '8–12',  descanso: '60–90s', pct1RM: '65–75%' },
-  'Domínio' : { series: 4–5, reps: '6–10',  descanso: '75–120s', pct1RM: '75–85%' },
-  'OverPrime': { series: 5+, reps: 'variável', descanso: 'auto', pct1RM: '85%+' }
+// Se quiser pré-preencher o Form do Professor, coloque aqui a URL base (Google Forms)
+// Ex.: const PROFESSOR_FORM_URL = 'https://docs.google.com/forms/d/e/XXXX/viewform';
+export const PROFESSOR_FORM_URL = ''; // ← preencha quando tiver o link
+
+// ---------- Datas ----------
+const todayISO = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 };
+const parseISO = (s) => new Date(`${s}T12:00:00`);
+const diffDays  = (a,b)=> Math.floor((parseISO(a)-parseISO(b))/(1000*60*60*24));
 
-// ======================================================================
-// Utils (uma única definição)  // FIX-UTILS: evita “Identifier already declared”
-// ======================================================================
-export const $  = (sel, root = document) => root.querySelector(sel);
-export const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
-
-export const escapeHTML = (str = '') =>
-  String(str).replace(/[&<>"']/g,
-    m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-
-export const toNumber = v => {
-  if (v === null || v === undefined || v === '') return undefined;
-  const n = Number(String(v).replace(',', '.'));
-  return Number.isFinite(n) ? n : undefined;
-};
-
-export const strip = (s='') =>
-  String(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
-
-export const pick = (obj, keys) => {
+// ---------- Utils ----------
+function cryptoId(){
+  try { return crypto.randomUUID(); }
+  catch { return 'id_' + Math.random().toString(36).slice(2,9); }
+}
+const strip = (s='') => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+const pick = (obj, keys) => {
   for (const k of keys) if (obj[k] !== undefined && obj[k] !== '') return obj[k];
-  return '';
+  return undefined;
 };
-
-export const normNivel = (x='') => {
+const normNivel = (x='') => {
   const n = strip(x);
   if (n.startsWith('fund')) return 'Fundação';
   if (n.startsWith('asc'))  return 'Ascensão';
@@ -52,44 +40,8 @@ export const normNivel = (x='') => {
   return '';
 };
 
-// ======================================================================
-// Regras de pontuação – preservadas para compat com suas views
-// (Se suas views possuírem suas próprias versões, elas continuam valendo.)
-// ======================================================================
-export function calcularPontuacao(respostas){
-  if (!respostas || typeof respostas !== 'object') return 0;
-  const criterios = [
-    { chave:/execu[cç][aã]o|t[ée]cnica|movimento|postura/i, bom:['boa','correta','excelente','sem dificuldade'], ruim:['ruim','errada','muita dificuldade'], peso:1 },
-    { chave:/frequ[êe]ncia|dias por semana|quantas vezes/i, bom:['4','5','6','7'], ruim:['0','1','2','nenhum','rara'], peso:1 },
-    { chave:/dor|les[aã]o|limita[cç][aã]o|tendinite|condromalacia|condromal[áa]cia|lombar|joelho|ombro/i, bom:['nenhuma','não','nao','controlada'], ruim:['sim','frequente','constante'], peso:-1 },
-    { chave:/sono/i, bom:['bom','regular','7','8','9'], ruim:['ruim','ins[ôo]nia','5','4','3'], peso:1 },
-    { chave:/alimenta[cç][aã]o|dieta|nutri/i, bom:['equilibrada','organizada','planejada','acompanha'], ruim:['desorganizada','ruim','pula','lanches'], peso:1 },
-    { chave:/tempo de treino|treina h[aá]|experi[êe]ncia/i, bom:['1 ano','2 anos','3 anos','mais de','> 1'], ruim:['iniciante','come[çc]ando','< 3 meses'], peso:1 },
-    { chave:/const[âa]ncia|disciplina|motiva[cç][aã]o/i, bom:['alta','boa','constante'], ruim:['baixa','oscilante'], peso:0.5 },
-  ];
-  let score = 0;
-  for (const [pergunta,resposta] of Object.entries(respostas)){
-    for (const c of criterios){
-      if (c.chave.test(pergunta)){
-        const t = String(resposta).toLowerCase();
-        if (c.bom.some(b => t.includes(b))) score += c.peso;
-        else if (c.ruim && c.ruim.some(r => t.includes(r))) score -= Math.abs(c.peso);
-      }
-    }
-  }
-  return Math.max(0, Math.min(9, score));
-}
-
-export const nivelPorPontuacao = s =>
-  (s <= 3.5 ? 'Fundação' : s <= 5.9 ? 'Ascensão' : 'Domínio');
-
-export const prontidaoPorPontuacao = s =>
-  (s >= 6 ? 'Pronta para subir' : s >= 5.0 ? 'Quase lá' : 'Manter nível');
-
-// ======================================================================
-// Coleta de respostas cruas (compatível com formulário) – mantida
-// ======================================================================
-export function collectAnswersFromRaw(raw){
+// Coleta todas as respostas do Sheets (para consulta completa no perfil)
+function collectAnswersFromRaw(raw){
   if (!raw) return {};
   const ignore = new Set([
     'id','identificador','uid','usuario',
@@ -101,181 +53,362 @@ export function collectAnswersFromRaw(raw){
     'pontuacao','pontuação','score','pontos','nota',
     'ultimotreino','ultimaavaliacao','dataavaliacao','data',
     'renovacaodias','renovacao','ciclodias',
+    // métricas que já extraímos separadamente
     'peso','peso (kg)','peso kg',
     'cintura','cintura (cm)','cintura cm',
     'quadril','quadril (cm)','quadril cm',
+    // campos do form do professor (não entram no _answers)
     'novo_nivel','novonivel','nivel_novo','nivel aprovado','nivel_aprovado',
     'aprovado','aprovacao','aprovação','aprovacao_professor','ok','apto','apta',
     'data_decisao','data_upgrade','data_mudanca','data da decisao',
     'observacao_professor','observacao','comentario'
   ]);
+  const norm = s => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
   const out = {};
   for (const [label, val] of Object.entries(raw)){
     if (val === null || val === undefined || String(val).trim()==='') continue;
-    const norm = strip(label);
-    if (ignore.has(norm)) continue;
+    if (ignore.has(norm(label))) continue;
     out[label] = String(val);
   }
   return out;
 }
 
-// ======================================================================
-// Store (API estável). // FIX-STORE: apenas robustez, sem mudar semântica.
-// ======================================================================
+// ---------- Dados (Sheets -> seed.json) ----------
+async function loadSeed(){
+  try{
+    const r = await fetch(SHEETS_API, { cache:'no-store' });
+    if(!r.ok) throw new Error(`Sheets HTTP ${r.status}`);
+    const data = await r.json();
+    if(!Array.isArray(data)) throw new Error('Sheets retornou formato inválido');
+    console.log('Sheets OK:', data.length);
+    return data;
+  }catch(e){
+    console.warn('Sheets falhou, usando seed.json:', e);
+    const r2 = await fetch('./assets/data/seed.json', { cache:'no-store' });
+    const data = await r2.json();
+    console.log('seed.json:', Array.isArray(data) ? data.length : 0);
+    return data;
+  }
+}
+
+// ---------- Store ----------
+const KEY = 'bp_clientes_v1';
+
 export const Store = {
   state: {
     clientes: [],
-    filters: { q: '', nivel: '', status: '' },
-    page: 1, pageSize: 25
+    filters: { q:'', nivel:'', status:'' },
+    scroll: { '/': 0 }
   },
 
-  async init() {
-    // 1) cache primeiro (abre UI sempre)  // FIX-BOOT
-    try {
-      const raw = localStorage.getItem('bp_clientes_cache');
-      if (raw) {
-        const arr = JSON.parse(raw);
-        if (Array.isArray(arr)) this.state.clientes = arr;
-      }
-    } catch {}
+  async init(){
+    try{
+      const brutos = await loadSeed();
 
-    // 2) busca do Sheets (não derruba a UI se falhar) // FIX-BOOT
-    try {
-      const r = await fetch(SHEETS_API, { cache: 'no-store' });
-      if (!r.ok) throw new Error('Sheets HTTP ' + r.status);
-      const data = await r.json();
-      if (!Array.isArray(data)) throw new Error('Formato inesperado');
-
-      // normalização leve mantendo suas regras
-      this.state.clientes = this._normalizar(data);
-      this.persist();
-    } catch (e) {
-      console.warn('[Store] Falha ao atualizar do Sheets — usando cache/local', e);
-    }
-  },
-
-  _normalizar(brutos){
-    const normRow = (raw) => {
-      const o = {};
-      for (const [k, v] of Object.entries(raw || {})) o[strip(k)] = v;
-      return o;
-    };
-
-    const registros = (brutos || []).map(raw => {
-      const o = normRow(raw);
-
-      const nome    = pick(o, ['nome','nome completo','seu nome','qual e o seu nome','qual seu nome','aluna','cliente']);
-      const contato = pick(o, ['contato','whatsapp','whats','telefone']);
-      const email   = pick(o, ['email','e-mail','mail']);
-      const id      = String(pick(o, ['id','uid','usuario']) || contato || email || Math.random().toString(36).slice(2,9));
-
-      const cidade  = pick(o, ['cidade-estado','cidade - estado','cidade/estado','cidade_estado','cidade-uf','cidade uf','cidadeuf','cidade']) || '';
-      const nivelIn = pick(o, ['nivel','nível','nivelatual','fase','faixa']);
-      const pontForm= Number(pick(o, ['pontuacao','pontuação','score','pontos','nota']) || 0);
-
-      const peso    = toNumber(pick(o,['peso','peso (kg)','peso kg']));
-      const cintura = toNumber(pick(o,['cintura','cintura (cm)','cintura cm']));
-      const quadril = toNumber(pick(o,['quadril','quadril (cm)','quadril cm']));
-      const rcq     = (cintura && quadril && quadril!==0) ? (cintura/quadril) : undefined;
-
-      const dataAval = pick(o, ['data','dataavaliacao','ultimotreino']);
-      const respostas = collectAnswersFromRaw(raw);
-
-      const score = (Number.isFinite(pontForm) && pontForm > 0) ? pontForm : calcularPontuacao(respostas);
-      const nivelSug = nivelPorPontuacao(score);
-      const readiness = prontidaoPorPontuacao(score);
-
-      const nivel = normNivel(nivelIn) || nivelSug;
-
-      return {
-        id,
-        nome: nome || '(Sem nome)',
-        nome_lc: (nome||'(Sem nome)').toLowerCase(),
-        contato: contato || '',
-        email: email || '',
-        cidade,
-        nivel,
-        pontuacao: score,
-        sugestaoNivel: nivelSug,
-        readiness,
-        ultimoTreino: dataAval || undefined,
-        renovacaoDias: Number(pick(o,['renovacaodias','renovacao','ciclodias'])) || 30,
-        peso: Number.isFinite(peso)?peso:undefined,
-        cintura: Number.isFinite(cintura)?cintura:undefined,
-        quadril: Number.isFinite(quadril)?quadril:undefined,
-        rcq: (typeof rcq === 'number' && !isNaN(rcq)) ? rcq : undefined,
-        _answers: respostas
+      // normaliza chaves (sem acentos)
+      const normRow = (raw) => {
+        const o = {};
+        for (const [k, v] of Object.entries(raw || {})) o[strip(k)] = v;
+        return o;
       };
-    });
 
-    // Consolida por ID, preservando o mais recente
-    const map = new Map();
-    for (const r of registros){
-      if (!map.has(r.id)){ map.set(r.id, r); continue; }
-      const dst = map.get(r.id);
-      for (const f of ['nome','contato','email','cidade','nome_lc']) if (!dst[f] && r[f]) dst[f] = r[f];
-      if (r.ultimoTreino && (!dst.ultimoTreino || r.ultimoTreino > dst.ultimoTreino)) dst.ultimoTreino = r.ultimoTreino;
-      if (typeof r.pontuacao === 'number') dst.pontuacao = r.pontuacao;
-      if (r.nivel) dst.nivel = r.nivel;
-      dst._answers = Object.assign({}, dst._answers || {}, r._answers || {});
+      const registros = (brutos || []).map(raw => {
+        const o = normRow(raw);
+
+        // Identificação
+        const nome = pick(o, ['nome','nome completo','seu nome','qual e o seu nome','qual seu nome','aluna','cliente']);
+        const contato = pick(o, ['contato','whatsapp','telefone']);
+        const email   = pick(o, ['email','e-mail','mail']);
+        const id      = String(pick(o, ['id','uid','usuario']) || contato || email || cryptoId());
+
+        // Cidade/Estado
+        const cidade = pick(o, [
+          'cidade-estado','cidade - estado','cidade/estado','cidade uf','cidadeuf','cidade'
+        ]) || '';
+
+        // Avaliação base (data/nivel/pontuacao)
+        const dataAval = pick(o, ['data','dataavaliacao','ultimotreino']);
+        const pontForm = Number(pick(o, ['pontuacao','pontuação','score','nota']) || 0);
+        const nivelIn  = pick(o, ['nivel','nível','fase','faixa']);
+
+        // ---- MÉTRICAS ANTROPOMÉTRICAS ----
+        const pesoRaw    = pick(o, ['peso','peso (kg)','peso kg']);
+        const cinturaRaw = pick(o, ['cintura','cintura (cm)','cintura cm']);
+        const quadrilRaw = pick(o, ['quadril','quadril (cm)','quadril cm']);
+
+        const peso    = (pesoRaw    !== undefined && pesoRaw !== '')    ? Number(String(pesoRaw).replace(',', '.'))    : undefined;
+        const cintura = (cinturaRaw !== undefined && cinturaRaw !== '') ? Number(String(cinturaRaw).replace(',', '.')) : undefined;
+        const quadril = (quadrilRaw !== undefined && quadrilRaw !== '') ? Number(String(quadrilRaw).replace(',', '.')) : undefined;
+        const rcq = (cintura && quadril && quadril !== 0) ? (cintura / quadril) : undefined;
+
+        // nível default (mantém tua lógica base)
+        const nivelDefault = (() => {
+          const n = strip(nivelIn || '');
+          if (n.startsWith('fund')) return 'Fundação';
+          if (n.startsWith('asc'))  return 'Ascensão';
+          if (n.startsWith('dom'))  return 'Domínio';
+          if (n.startsWith('over')) return 'OverPrime';
+          if (pontForm <= 2)  return 'Fundação';
+          if (pontForm <= 6)  return 'Ascensão';
+          return 'Domínio';
+        })();
+
+        const base = {
+          id,
+          nome: nome || '(Sem nome)',
+          contato: contato || '',
+          email: email || '',
+          cidade,
+          nivel: nivelDefault,
+          pontuacao: isNaN(pontForm) ? 0 : pontForm,
+          ultimoTreino: dataAval || undefined,
+          renovacaoDias: Number(pick(o,['renovacaodias','renovacao','ciclodias'])) || 30,
+          avaliacoes: [],
+          treinos: [], // histórico de treinos lançados
+          _answers: collectAnswersFromRaw(raw)
+        };
+
+        // --- Detecta linha do Formulário do Professor (upgrade de nível) ---
+        const novoNivelRaw = pick(o, [
+          'novo_nivel','novonivel','nivel_novo','nivel aprovado','nivel_aprovado','nivel_definido'
+        ]);
+        const aprovadoRaw = pick(o, [
+          'aprovado','aprovacao','aprovação','aprovacao_professor','ok','apto','apta'
+        ]);
+        const dataDecRaw  = pick(o, ['data_decisao','data_upgrade','data_mudanca','data da decisao']);
+        const obsProf     = pick(o, ['observacao_professor','observacao','comentario']);
+
+        if (novoNivelRaw) {
+          const aprovado = /^s(?!$)|^sim$|^ok$|^true$|^aprov/i.test(String(aprovadoRaw||''));
+          const novoNivel = normNivel(novoNivelRaw) || novoNivelRaw;
+          const dataUp = (dataDecRaw && /^\d{4}-\d{2}-\d{2}$/.test(String(dataDecRaw))) ? String(dataDecRaw) : todayISO();
+          base._upgradeEvent = { aprovado, novoNivel, data: dataUp, obs: obsProf || '' };
+        }
+
+        // --- Pontuação automática por respostas (fallback se não há nota explícita) ---
+        if ((!pontForm || isNaN(pontForm)) && base._answers && Object.keys(base._answers).length){
+          const auto = calcularPontuacao(base._answers);
+          base.pontuacao = auto;
+          base.nivel = nivelPorPontuacao(auto);
+        }
+
+        // adiciona avaliação com métricas + parecer (sempre que houver algo)
+        if (dataAval || !isNaN(base.pontuacao) || peso !== undefined || cintura !== undefined || quadril !== undefined) {
+          const dataISO = /^\d{4}-\d{2}-\d{2}$/.test(String(dataAval)) ? String(dataAval) : todayISO();
+          const sugestaoNivel = nivelPorPontuacao(base.pontuacao);
+          const readiness = prontidaoPorPontuacao(base.pontuacao); // Pronta / Quase lá / Manter
+
+          base.avaliacoes.push({
+            data: dataISO,
+            pontuacao: isNaN(base.pontuacao) ? 0 : base.pontuacao,
+            nivel: base.nivel,               // nível atual (não muda na reavaliação)
+            sugestaoNivel,                   // sugerido pela pontuação
+            readiness,                       // status de prontidão
+            peso: isNaN(peso) ? undefined : peso,
+            cintura: isNaN(cintura) ? undefined : cintura,
+            quadril: isNaN(quadril) ? undefined : quadril,
+            rcq: (typeof rcq === 'number' && !isNaN(rcq)) ? rcq : undefined
+          });
+        }
+        return base;
+      });
+
+      // colapsa por id (mantém histórico)
+      const map = new Map();
+      for (const r of registros) {
+        if (!map.has(r.id)) { map.set(r.id, r); continue; }
+        const dst = map.get(r.id);
+        for (const f of ['nome','contato','email','cidade']) if (!dst[f] && r[f]) dst[f] = r[f];
+        dst.avaliacoes = [...(dst.avaliacoes||[]), ...(r.avaliacoes||[])];
+        if (!Array.isArray(dst.treinos)) dst.treinos = []; // garante array
+
+        // acumula upgrades do professor
+        if (r._upgradeEvent) {
+          if (!Array.isArray(dst._allUpgrades)) dst._allUpgrades = [];
+          dst._allUpgrades.push(r._upgradeEvent);
+        }
+        // não sobrescreve _answers; mantém o primeiro
+      }
+
+      // ordena histórico por data + calcula prontidão consecutiva e elegibilidade
+      const list = [...map.values()];
+      for (const c of list) {
+        if (Array.isArray(c.avaliacoes)) {
+          c.avaliacoes.sort((a,b)=> (a.data||'').localeCompare(b.data||''));
+          const last = c.avaliacoes[c.avaliacoes.length-1];
+          if (last) {
+            c.pontuacao    = (typeof last.pontuacao === 'number') ? last.pontuacao : c.pontuacao;
+            // OBS: nível permanece o atual por reavaliação
+            c.ultimoTreino = c.ultimoTreino || last.data;
+            c.sugestaoNivel = last.sugestaoNivel;
+            c.readiness = last.readiness;
+          }
+
+          // conta consecutivas "Pronta para subir"
+          c.prontaConsecutivas = contarProntasSeguidas(c.avaliacoes);
+          c.elegivelPromocao   = c.prontaConsecutivas >= 2;
+        }
+
+        // aplica último upgrade aprovado do professor (se houver)
+        const ups = (c._allUpgrades || []).filter(u => u && u.aprovado);
+        if (ups.length){
+          ups.sort((a,b)=> (a.data||'').localeCompare(b.data||'')); // mais antigo -> mais novo
+          const lastUp = ups[ups.length-1];
+          if (lastUp.novoNivel){
+            c.nivel = normNivel(lastUp.novoNivel) || lastUp.novoNivel;
+            c.upgradeEm  = lastUp.data;
+            c.upgradeObs = lastUp.obs || '';
+          }
+        }
+      }
+
+      this.state.clientes = list;
+      this.persist();
+      console.log(`✅ Normalizado: ${this.state.clientes.length} clientes`);
+    }catch(e){
+      console.error('Falha init()', e);
+      this.state.clientes = [];
     }
-    return [...map.values()];
   },
 
-  persist(){
-    try { localStorage.setItem('bp_clientes_cache', JSON.stringify(this.state.clientes)); } catch {}
+  async reloadFromSheets(){ await this.init(); },
+
+  persist(){ localStorage.setItem(KEY, JSON.stringify(this.state.clientes)); },
+
+  list(){
+    const { q='', nivel='', status='' } = this.state.filters || {};
+    return [...this.state.clientes]
+      .sort((a,b)=> (a.nome||'').localeCompare(b.nome||'','pt',{sensitivity:'base'}))
+      .filter(c => !q     || (c.nome||'').toLowerCase().includes(q.toLowerCase()))
+      .filter(c => !nivel || c.nivel === nivel)
+      .filter(c => !status|| statusCalc(c).label === status);
   },
 
-  // APIs já usadas nas views
-  listFiltered(){
-    const { q='', nivel='', status='' } = this.state.filters;
-    let arr = this.state.clientes;
-    if (q){ const qlc = q.toLowerCase(); arr = arr.filter(c => (c.nome_lc||'').includes(qlc)); }
-    if (nivel) arr = arr.filter(c => c.nivel === nivel);
-    if (status) arr = arr.filter(c => (c.readiness || '—') === status);
-    return arr;
-  },
+  byId(id){ return this.state.clientes.find(c => String(c.id) === String(id)); },
 
-  pageSlice(){
-    const arr = this.listFiltered();
-    const p = Math.max(1, this.state.page|0);
-    const ps = this.state.pageSize|0 || 25;
-    const start = (p - 1) * ps;
-    return { total: arr.length, page: p, pageSize: ps, items: arr.slice(start, start + ps) };
-  },
-
-  exportJSON(){
-    const blob = new Blob([JSON.stringify(this.state.clientes,null,2)], {type:'application/json'});
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'bella-prime-clientes.json';
-    a.click();
-    URL.revokeObjectURL(a.href);
-  },
-
-  async importJSON(file){
-    const text = await file.text();
-    const arr = JSON.parse(text);
-    if(Array.isArray(arr)){ this.state.clientes = arr; this.persist(); }
+  upsert(c){
+    const i = this.state.clientes.findIndex(x => String(x.id) === String(c.id));
+    if (i >= 0) this.state.clientes[i] = c; else this.state.clientes.push(c);
+    this.persist();
   }
 };
 
-// ======================================================================
-// Boot & Router mínimos dentro das views (mantém seu padrão).
-// Se suas views já fazem o roteamento, você pode ignorar esta seção.
-// ======================================================================
+// ---------- Status ----------
+export function statusCalc(c){
+  const renov = c.renovacaoDias ?? 30;
+  const hoje  = todayISO();
+  const dias  = renov - (diffDays(hoje, c.ultimoTreino || hoje));
+  if (dias >= 10) return { label:'Ativa',           klass:'st-ok'   };
+  if (dias >= 3)  return { label:'Perto de vencer', klass:'st-warn' };
+  if (dias >= 0)  return { label:'Vence em breve',  klass:'st-soon' };
+  return            { label:'Vencida',              klass:'st-bad'  };
+}
 
-// FIX-BOOT: blindagem para o caso do Sheets falhar
-(async () => {
-  try {
-    await Store.init();
-  } catch (e) {
-    console.error('[boot] Store.init falhou — seguindo com estado vazio', e);
-    Store.state.clientes = [];
+// ---------- Programas permitidos por nível ----------
+export function programsByLevel(nivel){
+  switch (nivel) {
+    case 'Fundação': return ['ABC','ABCD'];                 // requisito
+    case 'Ascensão': return ['ABC','ABCD'];                 // pode abrir depois
+    case 'Domínio' : return ['ABC','ABCD','ABCDE','ABCDEF'];
+    case 'OverPrime': return ['ABC','ABCD','ABCDE','ABCDEF'];
+    default: return ['ABC','ABCD'];
   }
-  // Se você usa um Router central nas views, elas chamam a renderização.
-  // Caso contrário, dispare um evento para as views ouvirem:
-  try {
-    document.dispatchEvent(new CustomEvent('bp:data-ready'));
-  } catch {}
+}
+
+// ---------- Intensidades (para Domínio/OverPrime) ----------
+const INTENSIDADES_AVANCADAS = [
+  'Base Intermediária (≈65–70%)',
+  'Densidade / Hipertrofia (≈70–75%)',
+  'Força Relativa (≈75–85%)',
+  'Lapidação / Refinamento (≈75–80%)'
+];
+
+export function intensitiesByLevel(nivel){
+  if (!nivel) return null;
+  if (String(nivel).startsWith('Dom') || String(nivel).startsWith('Over')) {
+    return INTENSIDADES_AVANCADAS.slice();
+  }
+  return null; // níveis iniciais não pedem intensidade
+}
+
+// ---------- Pontuação/Nível/Prontidão ----------
+export function calcularPontuacao(respostas) {
+  if (!respostas || typeof respostas !== 'object') return 0;
+
+  const criterios = [
+    { chave: /execu[cç][aã]o|t[ée]cnica|movimento|postura/i, bom: ['boa','correta','excelente','sem dificuldade'], ruim: ['ruim','errada','muita dificuldade'], peso: 1 },
+    { chave: /frequ[êe]ncia|dias por semana|quantas vezes/i, bom: ['4','5','6','7'], ruim: ['0','1','2','nenhum','rara'], peso: 1 },
+    { chave: /dor|les[aã]o|limita[cç][aã]o|tendinite|condromalacia|condromal[áa]cia|lombar|joelho|ombro/i, bom: ['nenhuma','não','nao','controlada'], ruim: ['sim','frequente','constante'], peso: -1 },
+    { chave: /sono/i, bom: ['bom','regular','7','8','9'], ruim: ['ruim','ins[ôo]nia','5','4','3'], peso: 1 },
+    { chave: /alimenta[cç][aã]o|dieta|nutri/i, bom: ['equilibrada','organizada','planejada','acompanha'], ruim: ['desorganizada','ruim','pula','lanches'], peso: 1 },
+    { chave: /tempo de treino|treina h[aá]|experi[êe]ncia/i, bom: ['1 ano','2 anos','3 anos','mais de','> 1'], ruim: ['iniciante','come[çc]ando','< 3 meses'], peso: 1 },
+    { chave: /const[âa]ncia|disciplina|motiva[cç][aã]o/i, bom: ['alta','boa','constante'], ruim: ['baixa','oscilante'], peso: 0.5 }
+  ];
+
+  let score = 0;
+
+  for (const [pergunta, resposta] of Object.entries(respostas)) {
+    for (const c of criterios) {
+      if (c.chave.test(pergunta)) {
+        const texto = String(resposta).toLowerCase();
+        if (c.bom.some(b => texto.includes(b))) score += c.peso;
+        else if (c.ruim && c.ruim.some(r => texto.includes(r))) score -= Math.abs(c.peso);
+      }
+    }
+  }
+
+  score = Math.max(0, Math.min(9, score));
+  return score;
+}
+
+export function nivelPorPontuacao(score) {
+  // Faixas acordadas: ≤3.5 Fundação | 3.6–5.9 Ascensão | ≥6 Domínio
+  if (score <= 3.5) return 'Fundação';
+  if (score <= 5.9) return 'Ascensão';
+  return 'Domínio';
+}
+
+export function prontidaoPorPontuacao(score){
+  if (score >= 6)   return 'Pronta para subir';
+  if (score >= 5.0) return 'Quase lá';
+  return 'Manter nível';
+}
+
+function contarProntasSeguidas(avals){
+  if (!Array.isArray(avals) || avals.length === 0) return 0;
+  let count = 0;
+  for (let i = avals.length - 1; i >= 0; i--){
+    if (avals[i].readiness === 'Pronta para subir') count++;
+    else break;
+  }
+  return count;
+}
+
+// ---------- Router ----------
+const idRe = '([\\w\\-+.@=]+)';
+const routes = [
+  { path: new RegExp('^#\\/$'),                         view: DashboardView },
+  { path: new RegExp('^#\\/cliente\\/' + idRe + '$'),   view: ClienteView   },
+  { path: new RegExp('^#\\/avaliacao\\/' + idRe + '$'), view: AvaliacaoView },
+  { path: new RegExp('^#\\/treino\\/' + idRe + '\\/novo$'), view: TreinoView }, // <<< NOVO
+];
+
+async function render(){
+  const app  = document.getElementById('app');
+  const hash = location.hash;
+  let View = DashboardView, params = [];
+  if (hash && hash !== '#' && hash !== '#/'){
+    const match = routes.find(r => r.path.test(hash));
+    if (match){ params = match.path.exec(hash).slice(1); View = match.view; }
+  }
+  app.innerHTML = await View.template(...params);
+  if (View.init) await View.init(...params);
+}
+
+window.addEventListener('hashchange', render);
+
+// ---------- Boot ----------
+(async () => {
+  await Store.init();
+  await render();
 })();
