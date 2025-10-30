@@ -1,4 +1,4 @@
-import { Store } from '../app.js';
+import { Store, PROFESSOR_FORM_URL } from '../app.js';
 
 let pesoChart = null;
 let rcqChart  = null;
@@ -16,6 +16,8 @@ export const ClienteView = {
           <td>${a.data || '-'}</td>
           <td>${a.nivel || '-'}</td>
           <td>${a.pontuacao ?? '-'}</td>
+          <td>${a.sugestaoNivel || '-'}</td>
+          <td>${a.readiness || '-'}</td>
         </tr>
       `).join('');
 
@@ -38,7 +40,7 @@ export const ClienteView = {
       `;
     }
 
-    // --- Treinos registrados (novo card) ---
+    // --- Treinos registrados (mantido) ---
     const treinos = Array.isArray(c.treinos) ? c.treinos.slice().sort((a,b)=>(b.inicio||'').localeCompare(a.inicio||'')) : [];
     const linhasTreino = treinos.map(t => `
       <tr>
@@ -49,17 +51,38 @@ export const ClienteView = {
       </tr>
     `).join('');
 
+    // Badges de nível sugerido / prontidão / elegibilidade
+    const sugerido = c.sugestaoNivel ? `<span class="badge" style="background:#2b6777">sugerido: ${c.sugestaoNivel}</span>` : '';
+    const readyTag = c.readiness ? `<span class="badge" style="background:${badgeColor(c.readiness)}">${c.readiness}</span>` : '';
+    const elegivel = c.elegivelPromocao ? `<span class="badge" style="background:#7cb342">elegível</span>` : '';
+    const prontasN = c.prontaConsecutivas ? `<small style="opacity:.75">(${c.prontaConsecutivas} reavaliaç${c.prontaConsecutivas>1?'ões':'ão'} prontas seguidas)</small>` : '';
+
+    // CTA do Professor (pré-preenchido se a URL existir)
+    const linkProfessor = (PROFESSOR_FORM_URL && c.id)
+      ? `${PROFESSOR_FORM_URL}?id=${encodeURIComponent(c.id)}&nome=${encodeURIComponent(c.nome||'')}`
+      : '';
+    const ctaProfessor = linkProfessor
+      ? `<a class="btn btn-primary" href="${linkProfessor}" target="_blank" rel="noopener">📋 Abrir Formulário do Professor</a>`
+      : `<button class="btn btn-outline" id="professorFormBtn" title="Defina PROFESSOR_FORM_URL no app.js">📋 Formulário do Professor</button>`;
+
     return `
       <section class="card">
         <a href="#/" class="btn btn-outline" style="margin-bottom:10px;">← Voltar</a>
         <h2>${escapeHTML(c.nome || '')}</h2>
-        <p><b>Nível atual:</b> <span class="badge">${c.nivel || '-'}</span></p>
+        <p>
+          <b>Nível atual:</b> <span class="badge">${c.nivel || '-'}</span>
+          ${sugerido} ${readyTag} ${elegivel} ${prontasN}
+        </p>
         <p><b>Última pontuação:</b> ${c.pontuacao ?? '-'}</p>
         <p><b>Última avaliação:</b> ${c.ultimoTreino ?? '-'}</p>
         ${c.objetivo ? `<p><b>Objetivo:</b> ${escapeHTML(c.objetivo)}</p>` : ''}
         ${c.cidade  ? `<p><b>Cidade/Estado:</b> ${escapeHTML(c.cidade)}</p>` : ''}
         ${c.email   ? `<p><b>E-mail:</b> ${escapeHTML(c.email)}</p>` : ''}
         ${c.contato ? `<p><b>WhatsApp:</b> ${escapeHTML(c.contato)}</p>` : ''}
+        <div class="row" style="gap:10px;margin-top:12px">
+          <a class="btn" href="#/treino/${c.id}/novo">➕ Lançar novo treino</a>
+          ${ctaProfessor}
+        </div>
       </section>
 
       <section class="card">
@@ -82,12 +105,12 @@ export const ClienteView = {
       <section class="card">
         <h3>Histórico de Avaliações</h3>
         <table class="table">
-          <thead><tr><th>Data</th><th>Nível</th><th>Pontuação</th></tr></thead>
-          <tbody>${historico || '<tr><td colspan="3">Nenhum registro ainda.</td></tr>'}</tbody>
+          <thead><tr><th>Data</th><th>Nível</th><th>Pontuação</th><th>Sugerido</th><th>Prontidão</th></tr></thead>
+          <tbody>${historico || '<tr><td colspan="5">Nenhum registro ainda.</td></tr>'}</tbody>
         </table>
       </section>
 
-      <!-- seus 3 gráficos ficam mantidos abaixo -->
+      <!-- gráficos mantidos -->
       <section class="card chart-card">
         <h3>Evolução do Peso (kg)</h3>
         <div id="pesoEmpty" style="display:none;color:#aaa">Sem dados de peso suficientes.</div>
@@ -122,6 +145,14 @@ export const ClienteView = {
         document.execCommand('copy');
         copyBtn.textContent = 'Copiado!';
         setTimeout(()=> copyBtn.textContent = 'Copiar lista', 1200);
+      });
+    }
+
+    // aviso caso PROFESSOR_FORM_URL não esteja setado
+    const profBtn = document.getElementById('professorFormBtn');
+    if (profBtn){
+      profBtn.addEventListener('click', ()=> {
+        alert('Defina PROFESSOR_FORM_URL no app.js para abrir o Formulário do Professor com ID/nome.');
       });
     }
 
@@ -225,3 +256,9 @@ function escapeHTML(s){
 }
 function escapePlain(s){ return String(s || '').replace(/\r?\n/g, '\n'); }
 function toNum(v){ const n = Number(String(v).replace(',', '.')); return Number.isFinite(n) ? n : undefined; }
+
+function badgeColor(readiness){
+  if (readiness === 'Pronta para subir') return '#2e7d32';
+  if (readiness === 'Quase lá') return '#f9a825';
+  return '#455a64';
+}
