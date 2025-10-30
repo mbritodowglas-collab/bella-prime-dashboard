@@ -7,7 +7,12 @@ import { ClienteView }   from './views/clienteview.js';
 import { AvaliacaoView } from './views/avaliacaoview.js';
 import { TreinoView }    from './views/treinoview.js'; // <<< NOVO
 
+// ---------- Config gerais ----------
 const SHEETS_API = 'https://script.google.com/macros/s/AKfycbyAafbpJDWr4RF9hdTkzmnLLv1Ge258hk6jlnDo7ng2kk88GoWyJzp63rHZPMDJA-wy/exec';
+
+// Branding usado pelo Relatório (evita erro nos imports do RelatorioView)
+export const BRAND_NAME = 'Bella Prime';
+export const RELATORIO_LOGO_PNG = './assets/img/logo-relatorio.png';
 
 // Se quiser pré-preencher o Form do Professor, coloque aqui a URL base (Google Forms)
 export const PROFESSOR_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLScvQBCSEVdTspYgelGI0zWbrK21ttO1IUKuf9_j5rO_a2czfA/viewform?usp=header';
@@ -405,7 +410,7 @@ async function render(){
 }
 
 /* =========================
-   PATCH DE UI (CSS + tabelas mobile)
+   PATCH DE UI (CSS + tabelas mobile + zona segura nas ações)
    ========================= */
 const BP_MOBILE_CSS = `
 :root{
@@ -418,7 +423,7 @@ html,body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,s
 .card{background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.01));border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;box-shadow:var(--shadow);backdrop-filter:saturate(1.1) blur(2px);margin-bottom:14px;}
 .input{width:100%;height:44px;border-radius:12px;padding:0 12px;border:1px solid var(--border);background:#111316;color:var(--text);font-size:.95rem;}
 .input:focus{outline:none;border-color:#3a3f47;box-shadow:0 0 0 2px rgba(198,40,40,.12);}
-.btn{--h:44px;height:var(--h);line-height:var(--h);display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:12px;padding:0 14px;font-weight:600;letter-spacing:.2px;border:1px solid var(--border);background:#14161a;color:var(--text);transition:transform .08s ease,filter .12s ease,background .2s ease,border-color .2s ease;cursor:pointer;text-decoration:none;}
+.btn{--h:44px;min-width:44px;height:var(--h);line-height:var(--h);display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:12px;padding:0 14px;font-weight:600;letter-spacing:.2px;border:1px solid var(--border);background:#14161a;color:var(--text);transition:transform .08s ease,filter .12s ease,background .2s ease,border-color .2s ease;cursor:pointer;text-decoration:none;}
 .btn:hover{filter:brightness(1.08);} .btn:active{transform:translateY(1px);}
 .btn-primary{background:var(--primary);border-color:var(--primary-2);color:#fff;} .btn-primary:hover{background:var(--primary-2);} .btn-primary:active{background:var(--primary-3);}
 .btn-outline{background:transparent;} .btn-danger{background:#a32622;border-color:#8e1f1b;color:#fff;} .btn-success{background:var(--ok);border-color:#1a7b46;color:#fff;}
@@ -428,19 +433,33 @@ html,body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,s
 .st-warn{background:rgba(197,147,26,.20);color:#ffd86b;border:1px solid rgba(197,147,26,.35);}
 .st-soon{background:rgba(197,147,26,.12);color:#ffea9a;border:1px solid rgba(197,147,26,.22);}
 .st-bad{background:rgba(171,43,40,.22);color:#ff9e9c;border:1px solid rgba(171,43,40,.32);}
+
+/* Tabelas */
 .table{width:100%;border-collapse:separate;border-spacing:0;min-width:520px;}
 .table thead th{font-weight:700;color:#cfd2d8;text-align:left;padding:10px;}
 .table tbody td{padding:10px;border-top:1px solid var(--border);}
 .table tbody tr:hover{background:rgba(255,255,255,.02);}
 .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px;}
+
+/* Coluna de ações: zona segura */
+.td-actions{text-align:right;}
+.td-actions .btn{min-width:64px;}
+.td-actions .btn + .btn{margin-left:12px;} /* espaço entre Ver e Excluir */
+.td-actions .btn-danger{filter:saturate(1.1);} /* reforço visual do risco */
+
+/* Mobile: tabela em formato “cards”, e ações descem para a linha final, alinhadas à direita */
 @media(max-width:640px){
   .table{min-width:unset;}
   .table thead{display:none;}
   .table tbody tr{display:grid;grid-template-columns:1fr auto;gap:6px;padding:10px;border-top:1px solid var(--border);}
   .table tbody td{display:flex;justify-content:space-between;align-items:center;border:none;padding:6px 0;}
   .table tbody td::before{content:attr(data-label);color:var(--muted);font-weight:600;margin-right:12px;}
+  .td-actions{grid-column:1 / -1;justify-content:flex-end;}
 }
-.chart-card canvas{max-height:240px;} @media(max-width:640px){.chart-card canvas{max-height:200px;}}
+
+.chart-card canvas{max-height:240px;}
+@media(max-width:640px){.chart-card canvas{max-height:200px;}}
+
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
 `;
 
@@ -452,13 +471,15 @@ function ensureStylesInjected(){
   document.head.appendChild(s);
 }
 
-// Cria automaticamente data-label nos <td> com base nos <th>
+// Cria automaticamente data-label nos <td> com base nos <th> e marca a última célula como “ações”
 function enhanceTables(){
   document.querySelectorAll('table.table').forEach(table=>{
     const headers = [...table.querySelectorAll('thead th')].map(th=>th.textContent.trim());
     table.querySelectorAll('tbody tr').forEach(tr=>{
-      [...tr.children].forEach((td,i)=>{
+      const cells = [...tr.children];
+      cells.forEach((td,i)=>{
         if (!td.getAttribute('data-label')) td.setAttribute('data-label', headers[i] || '');
+        if (i === cells.length - 1) td.classList.add('td-actions');
       });
     });
   });
