@@ -21,7 +21,7 @@ export const ClienteView = {
         </tr>
       `).join('');
 
-    // respostas completas (mantido)
+    // respostas completas
     let blocoRespostas = '';
     if (c._answers && Object.keys(c._answers).length > 0) {
       const lista = Object.entries(c._answers)
@@ -40,7 +40,7 @@ export const ClienteView = {
       `;
     }
 
-    // --- Treinos registrados (corrigido: usa data_inicio/data_venc/observacao) ---
+    // --- Treinos registrados ---
     const treinos = Array.isArray(c.treinos)
       ? c.treinos.slice().sort((a,b)=>(b.data_inicio||'').localeCompare(a.data_inicio||''))
       : [];
@@ -60,19 +60,20 @@ export const ClienteView = {
       `;
     }).join('');
 
-    // Badges de nível sugerido / prontidão / elegibilidade
+    // Badges
     const sugerido = c.sugestaoNivel ? `<span class="badge" style="background:#2b6777">sugerido: ${c.sugestaoNivel}</span>` : '';
     const readyTag = c.readiness ? `<span class="badge" style="background:${badgeColor(c.readiness)}">${c.readiness}</span>` : '';
     const elegivel = c.elegivelPromocao ? `<span class="badge" style="background:#7cb342">elegível</span>` : '';
     const prontasN = c.prontaConsecutivas ? `<small style="opacity:.75">(${c.prontaConsecutivas} reavaliaç${c.prontaConsecutivas>1?'ões':'ão'} prontas seguidas)</small>` : '';
 
-    // CTA do Professor (pré-preenchido com id/nome simples)
+    // CTAs
     const linkProfessor = (PROFESSOR_FORM_URL && c.id)
       ? `${PROFESSOR_FORM_URL}?id=${encodeURIComponent(c.id)}&nome=${encodeURIComponent(c.nome||'')}`
       : '';
     const ctaProfessor = linkProfessor
       ? `<a class="btn btn-primary" href="${linkProfessor}" target="_blank" rel="noopener">📋 Formulário do Professor</a>`
       : `<button class="btn btn-outline" id="professorFormBtn" title="Defina PROFESSOR_FORM_URL no app.js">📋 Formulário do Professor</button>`;
+    const ctaRelatorio = `<a class="btn btn-outline" href="#/relatorio/${c.id}">🧾 Relatório PDF</a>`;
 
     return `
       <section class="card">
@@ -88,8 +89,9 @@ export const ClienteView = {
         ${c.cidade  ? `<p><b>Cidade/Estado:</b> ${escapeHTML(c.cidade)}</p>` : ''}
         ${c.email   ? `<p><b>E-mail:</b> ${escapeHTML(c.email)}</p>` : ''}
         ${c.contato ? `<p><b>WhatsApp:</b> ${escapeHTML(c.contato)}</p>` : ''}
-        <div class="row" style="gap:10px;margin-top:12px">
+        <div class="row" style="gap:10px;margin-top:12px;flex-wrap:wrap">
           ${ctaProfessor}
+          ${ctaRelatorio}
         </div>
       </section>
 
@@ -100,7 +102,7 @@ export const ClienteView = {
         </div>
         ${treinos.length === 0 ? `<div style="color:#aaa;margin-top:8px">Nenhum treino registrado ainda.</div>` : `
           <div style="overflow:auto;margin-top:8px">
-            <table class="table">
+            <table class="table" style="min-width:720px">
               <thead>
                 <tr><th>Programa</th><th>Período</th><th>Status</th><th>Obs.</th><th style="text-align:right">Ações</th></tr>
               </thead>
@@ -120,7 +122,7 @@ export const ClienteView = {
         </table>
       </section>
 
-      <!-- gráficos mantidos -->
+      <!-- gráficos -->
       <section class="card chart-card">
         <h3>Evolução do Peso (kg)</h3>
         <div id="pesoEmpty" style="display:none;color:#aaa">Sem dados de peso suficientes.</div>
@@ -166,7 +168,7 @@ export const ClienteView = {
       });
     }
 
-    // Excluir treino (delegação por botão)
+    // Excluir treino
     document.querySelectorAll('.btn-del-treino').forEach(btn => {
       btn.addEventListener('click', () => {
         const tid = btn.getAttribute('data-treino');
