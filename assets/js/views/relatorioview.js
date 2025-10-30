@@ -1,7 +1,7 @@
 // ================================
 // VIEW: Relatório da Cliente (A4/print) + gráficos (Peso, Medidas, RCQ, WHtR)
 // ================================
-import { Store, BRAND_LOGO_PNG } from '../app.js';
+import { Store, RELATORIO_LOGO_PNG } from '../app.js';
 
 export const RelatorioView = {
   async template(id){
@@ -14,7 +14,6 @@ export const RelatorioView = {
       .sort((a,b)=>(a.data||'').localeCompare(b.data||''));
 
     const ultimaAval   = avalsAll[avalsAll.length-1] || {};
-    const primeiraAval = avalsAll[0] || {};
 
     // ---- séries
     const seriePeso = avalsAll.filter(a => isNum(a.peso));
@@ -48,7 +47,7 @@ export const RelatorioView = {
     const treinos = (c.treinos||[]).slice().sort((a,b)=>(b.data_inicio||'').localeCompare(a.data_inicio||''));
     const planoMaisRecente = treinos.length ? (treinos[0].plano_texto || '') : '';
 
-    // ---- deltas
+    // ---- deltas (último - primeiro)
     const dPeso = deltaFromSeries(seriePeso, 'peso');         // kg
     const dCint = deltaFromSeries(serieCint, 'cintura');      // cm
     const dQuad = deltaFromSeries(serieQuad, 'quadril');      // cm
@@ -100,7 +99,7 @@ export const RelatorioView = {
         </div>
 
         <div class="r-header">
-          <img src="${BRAND_LOGO_PNG}" alt="Logo" />
+          <img src="${RELATORIO_LOGO_PNG}" alt="Logo" />
           <div>
             <h2 style="margin:0">Relatório de Avaliação — ${escapeHTML(c.nome||'')}</h2>
             <div class="muted">Gerado em ${ts}</div>
@@ -236,12 +235,13 @@ export const RelatorioView = {
     const sC = avals.filter(a=>isNum(a.cintura));
     const sQ = avals.filter(a=>isNum(a.quadril));
     const sA = avals.map(a=>({ ...a, abd: pickNum(a,['abdomen','abdome'])})).filter(a=>isNum(a.abd));
+    const labelsMed = unionLabels([sC,sQ,sA]);
     drawLineChart('#rMedidas', {
-      labels: unionLabels([sC,sQ,sA]),
+      labels: labelsMed,
       series: [
-        { name:'Cintura', values: alignedValues(unionLabels([sC,sQ,sA]), sC, 'cintura'), color:'#42a5f5', fill:'rgba(66,165,245,0.14)' },
-        { name:'Quadril', values: alignedValues(unionLabels([sC,sQ,sA]), sQ, 'quadril'), color:'#ab47bc', fill:'rgba(171,71,188,0.14)' },
-        { name:'Abdômen', values: alignedValues(unionLabels([sC,sQ,sA]), sA, 'abd'),    color:'#26a69a', fill:'rgba(38,166,154,0.14)' }
+        { name:'Cintura', values: alignedValues(labelsMed, sC, 'cintura'), color:'#42a5f5', fill:'rgba(66,165,245,0.14)' },
+        { name:'Quadril', values: alignedValues(labelsMed, sQ, 'quadril'), color:'#ab47bc', fill:'rgba(171,71,188,0.14)' },
+        { name:'Abdômen', values: alignedValues(labelsMed, sA, 'abd'),    color:'#26a69a', fill:'rgba(38,166,154,0.14)' }
       ],
       ySuffix: 'cm',
       showIfAtLeast: 2
@@ -420,3 +420,4 @@ function drawLineChart(selector, { labels, series, ySuffix='', showIfAtLeast=2, 
     ctx.fillText(lastLabel, W - pad.r - w, H-6);
   }
 }
+```0
