@@ -16,11 +16,13 @@ export const RelatorioView = {
     const c = Store.byId(id);
     if (!c) return `<section class="card"><h2>Cliente não encontrada</h2></section>`;
 
+    // última avaliação
     const ultimaAval = (c.avaliacoes||[])
       .slice()
       .sort((a,b)=>(a.data||'').localeCompare(b.data||''))
       .pop() || {};
 
+    // treinos (normalização leve)
     const treinos = (c.treinos||[])
       .slice()
       .map(t => ({
@@ -39,6 +41,7 @@ export const RelatorioView = {
     const hoje = new Date();
     const ts   = `${hoje.toLocaleDateString('pt-BR')} ${hoje.toLocaleTimeString('pt-BR')}`;
 
+    // Branding (com fallback seguro)
     let BRAND_NAME = BRAND_NAME_FALLBACK;
     let RELATORIO_LOGO_PNG = LOGO_PNG_FALLBACK;
     try {
@@ -47,12 +50,12 @@ export const RelatorioView = {
       RELATORIO_LOGO_PNG = mod.RELATORIO_LOGO_PNG || RELATORIO_LOGO_PNG;
     } catch (_) {}
 
-    // ---------- métricas mostradas na tabela (exibição) ----------
+    // ---------- métricas mostradas na tabela ----------
     const pesoVal    = pick(ultimaAval, ["peso", "Peso (kg)", "peso_kg"]);
     const cinturaVal = pick(ultimaAval, ["cintura", "Cintura (cm)", "cintura_cm"]);
     const quadrilVal = pick(ultimaAval, ["quadril", "Quadril (cm)", "quadril_cm"]);
 
-    // >>> AQUI: aceitar todas as variações usuais do abdômen
+    // Abdômen — aceita várias variações usuais do Sheets
     const abdomeVal  = pick(ultimaAval, [
       "abdomen","abdome","abdomem","abdominal",
       "abdomen_cm","abdome_cm",
@@ -62,12 +65,18 @@ export const RelatorioView = {
       "perimetro abdominal","circunferencia abdominal"
     ]);
 
+    // %G (Marinha) — se você já salvar esse campo na avaliação
+    const bodyfatVal = pick(ultimaAval, [
+      "bodyfat","body_fat","bf","%g","gordura_percentual","bf_marinha","bf_navy"
+    ]);
+
     const peso    = nOrDash(pesoVal, 2);
     const cintura = nOrDash(cinturaVal, 0);
     const quadril = nOrDash(quadrilVal, 0);
     const abdome  = nOrDash(abdomeVal, 0);
     const rcq     = nOrDash(calcRCQ(ultimaAval), 3);
     const rce     = nOrDash(calcRCE(ultimaAval), 3);
+    const bodyfat = nOrDash(bodyfatVal, 1);
 
     return `
       <style>
@@ -128,7 +137,16 @@ export const RelatorioView = {
             <div class="table-wrap">
               <table class="table" style="width:100%">
                 <thead>
-                  <tr><th>Data</th><th>Peso (kg)</th><th>Cintura (cm)</th><th>Quadril (cm)</th><th>Abdome (cm)</th><th>RCQ</th><th>RCE</th></tr>
+                  <tr>
+                    <th>Data</th>
+                    <th>Peso (kg)</th>
+                    <th>Cintura (cm)</th>
+                    <th>Quadril (cm)</th>
+                    <th>Abdome (cm)</th>
+                    <th>RCQ</th>
+                    <th>RCE</th>
+                    <th>%G (Marinha)</th>
+                  </tr>
                 </thead>
                 <tbody>
                   <tr>
@@ -139,6 +157,7 @@ export const RelatorioView = {
                     <td>${abdome}</td>
                     <td>${rcq}</td>
                     <td>${rce}</td>
+                    <td>${bodyfat==='-' ? '-' : `${bodyfat}%`}</td>
                   </tr>
                 </tbody>
               </table>
@@ -146,13 +165,14 @@ export const RelatorioView = {
           </div>
         </div>
 
-        <!-- Gráficos (Peso, RCQ, RCE) permanecem iguais -->
+        <!-- Gráfico: Peso -->
         <div class="r-card chart-card avoid-break" style="margin-top:14px">
           <h3 style="margin-top:0">Evolução do Peso</h3>
           <div id="pesoEmpty" class="muted" style="display:none">Sem dados de peso suficientes.</div>
           <canvas id="chartPeso" height="180"></canvas>
         </div>
 
+        <!-- Gráfico + explicação: RCQ -->
         <div class="r-card chart-card avoid-break" style="margin-top:14px">
           <div class="row" style="justify-content:space-between;align-items:flex-end;">
             <h3 style="margin:0">RCQ (Relação Cintura/Quadril)</h3>
@@ -165,6 +185,7 @@ export const RelatorioView = {
           <canvas id="chartRCQ" height="180"></canvas>
         </div>
 
+        <!-- Gráfico + explicação: RCE -->
         <div class="r-card chart-card avoid-break" style="margin-top:14px">
           <div class="row" style="justify-content:space-between;align-items:flex-end;">
             <h3 style="margin:0">RCE (Relação Cintura/Estatura)</h3>
@@ -225,6 +246,7 @@ export const RelatorioView = {
       }
     });
 
+    // Sem Chart.js, não plota
     if (typeof window.Chart !== 'function') return;
 
     const c = Store.byId(id);
