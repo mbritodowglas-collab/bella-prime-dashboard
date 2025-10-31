@@ -3,11 +3,17 @@
 // ================================
 import { Store, statusCalc } from '../app.js';
 
-let chartRef = null;
+let chartRef = null;        // barras (níveis)
+let pesoChart = null;       // linha (peso)
+let rcqChart  = null;       // linha (RCQ)
+let whtrChart = null;       // linha (WHtR/RCE)
 
 export const DashboardView = {
   async template(){
     const k = kpi(Store.state.clientes);
+    // pega a 1ª cliente da lista filtrada para os gráficos de métricas
+    const firstClient = (Store.list() || [])[0];
+
     return `
       <section class="row">
         <div class="kpi"><h4>Total</h4><div class="num">${k.total}</div></div>
@@ -42,6 +48,28 @@ export const DashboardView = {
         <canvas id="chartNiveis" height="140"></canvas>
       </section>
 
+      ${firstClient ? `
+        <section class="card chart-card">
+          <h3 style="margin-top:0">Evolução do Peso (kg) — ${escapeHTML(firstClient.nome||'')}</h3>
+          <div id="pesoEmpty" style="display:none;color:#aaa">Sem dados de peso suficientes.</div>
+          <canvas id="dashPeso" height="160"></canvas>
+        </section>
+
+        <section class="card chart-card">
+          <h3 style="margin-top:0">Relação Cintura/Quadril (RCQ)</h3>
+          <small class="muted">cintura ÷ quadril • alvo prático (mulheres): ≲ 0,85</small>
+          <div id="rcqEmpty" style="display:none;color:#aaa">Sem dados de cintura/quadril suficientes.</div>
+          <canvas id="dashRCQ" height="160"></canvas>
+        </section>
+
+        <section class="card chart-card">
+          <h3 style="margin-top:0">RCE / WHtR (cintura/estatura)</h3>
+          <small class="muted">regra de bolso: manter &lt; 0,50 (cintura menor que metade da altura)</small>
+          <div id="whtrEmpty" style="display:none;color:#aaa">Sem dados de cintura/estatura suficientes.</div>
+          <canvas id="dashWHtR" height="160"></canvas>
+        </section>
+      ` : ''}
+
       <section class="card">
         <table class="table">
           <thead>
@@ -50,10 +78,10 @@ export const DashboardView = {
               <th>Nível</th>
               <th>Vencimento</th>
               <th>Status</th>
-              <th style="width:180px;text-align:right;">Ações</th> <!-- largura maior -->
+              <th style="width:180px;text-align:right;">Ações</th>
             </tr>
           </thead>
-        <tbody id="tbody"></tbody>
+          <tbody id="tbody"></tbody>
         </table>
         <div id="empty" style="display:none;padding:12px;color:#aaa">Sem clientes para exibir.</div>
       </section>
@@ -97,15 +125,16 @@ export const DashboardView = {
             Store.persist();
             chartNiveis();
             renderTable();
+            renderMetricCharts(); // re-render métricas (pode mudar 1ª cliente)
           }
         });
       });
     };
 
     const debounce = (fn, ms=200)=>{ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms);} };
-    $('#q').addEventListener('input', debounce(e => { Store.state.filters.q = e.target.value; renderTable(); }));
-    $('#nivel').addEventListener('change', e => { Store.state.filters.nivel = e.target.value; renderTable(); });
-    $('#status').addEventListener('change', e => { Store.state.filters.status = e.target.value; renderTable(); });
+    $('#q').addEventListener('input', debounce(e => { Store.state.filters.q = e.target.value; renderTable(); renderMetricCharts(); }));
+    $('#nivel').addEventListener('change', e => { Store.state.filters.nivel = e.target.value; renderTable(); renderMetricCharts(); });
+    $('#status').addEventListener('change', e => { Store.state.filters.status = e.target.value; renderTable(); renderMetricCharts(); });
 
     document.getElementById('exportBtn').addEventListener('click', () => Store.exportJSON?.());
     document.getElementById('importBtn').addEventListener('click', () => document.getElementById('file').click());
@@ -114,6 +143,7 @@ export const DashboardView = {
       await Store.importJSON?.(f);
       chartNiveis();
       renderTable();
+      renderMetricCharts();
       e.target.value = '';
     });
 
@@ -127,6 +157,7 @@ export const DashboardView = {
         $('#q').value=''; $('#nivel').value=''; $('#status').value='';
         chartNiveis();
         renderTable();
+        renderMetricCharts();
       } finally {
         btn.disabled = false; btn.textContent = old;
       }
@@ -147,6 +178,7 @@ export const DashboardView = {
 
     chartNiveis();
     renderTable();
+    renderMetricCharts(); // gráficos Peso/RCQ/WHtR
   }
 };
 
@@ -209,8 +241,122 @@ function chartNiveis(){
         borderWidth: 1
       }]
     },
-    options: { responsive:true, scales:{ y:{ beginAtZero:true } } }
+    options: { responsive:true, scales:{ y:{ beginAtZero:true } }, plugins:{ legend:{ display:false } } }
   });
+}
+
+// ---------- gráficos de métricas (Peso, RCQ, WHtR) ----------
+function renderMetricCharts(){
+  // destrói instâncias anteriores
+  if (pesoChart) pesoChart.destroy();
+  if (rcqChart)  rcqChart.destroy();
+  if (whtrChart) whtrChart.destroy();
+
+  // Chart.js disponível?
+  if (typeof window.Chart !== 'function') return;
+
+  const list = Store.list();
+  const c = list[0];
+  if (!c) return;
+
+  // helpers
+  const toNum = (v)=>{
+    if (v===undefined || v===null || v==='') return undefined;
+    const n = Number(String(v).replace(',', '.'));
+    return Number.isFinite(n) ? n : undefined;
+  };
+
+  const avals = (c.avaliacoes||[])
+    .slice()
+    .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
+
+  // PESO
+  const pesoCtx = document.getElementById('dashPeso');
+  const pesoEmpty = document.getElementById('pesoEmpty');
+  const seriePeso = avals.filter(a => typeof a.peso === 'number' && !isNaN(a.peso));
+  if (pesoCtx && seriePeso.length >= 1){
+    pesoChart = new Chart(pesoCtx, {
+      type:'line',
+      data:{
+        labels: seriePeso.map(a=>a.data||''),
+        datasets:[{
+          label:'Peso (kg)',
+          data: seriePeso.map(a=>Number(a.peso)),
+          tension:.35, borderWidth:3,
+          borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,.18)',
+          fill:true, pointRadius:4, pointHoverRadius:6
+        }]
+      },
+      options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:false}}}
+    });
+    if (pesoEmpty) pesoEmpty.style.display='none';
+  } else if (pesoEmpty) pesoEmpty.style.display='block';
+
+  // RCQ
+  const rcqCtx = document.getElementById('dashRCQ');
+  const rcqEmpty = document.getElementById('rcqEmpty');
+  const serieRCQ = avals
+    .map(a=>{
+      let rcq = (typeof a.rcq === 'number' && !isNaN(a.rcq)) ? a.rcq : undefined;
+      const cintura = toNum(a.cintura);
+      const quadril = toNum(a.quadril);
+      if (rcq===undefined && Number.isFinite(cintura) && Number.isFinite(quadril) && quadril!==0){
+        rcq = cintura / quadril;
+      }
+      return rcq!==undefined ? {data:a.data||'', rcq} : null;
+    })
+    .filter(Boolean);
+  if (rcqCtx && serieRCQ.length >= 1){
+    rcqChart = new Chart(rcqCtx, {
+      type:'line',
+      data:{
+        labels: serieRCQ.map(x=>x.data),
+        datasets:[{
+          label:'RCQ',
+          data: serieRCQ.map(x=>x.rcq),
+          tension:.35, borderWidth:3,
+          borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,.18)',
+          fill:true, pointRadius:4, pointHoverRadius:6
+        }]
+      },
+      options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:false,suggestedMin:0.6,suggestedMax:1.0}}}
+    });
+    if (rcqEmpty) rcqEmpty.style.display='none';
+  } else if (rcqEmpty) rcqEmpty.style.display='block';
+
+  // WHtR / RCE
+  const whtrCtx = document.getElementById('dashWHtR');
+  const whtrEmpty = document.getElementById('whtrEmpty');
+  const serieWHtR = avals
+    .map(a=>{
+      let whtr = (typeof a.whtr === 'number' && !isNaN(a.whtr)) ? a.whtr : undefined;
+      const cintura = toNum(a.cintura);
+      let altura = toNum(a.altura);
+      if (Number.isFinite(altura) && altura <= 3) altura *= 100; // metros -> cm
+      if (whtr===undefined && Number.isFinite(cintura) && Number.isFinite(altura) && altura!==0){
+        whtr = cintura / altura;
+      }
+      return whtr!==undefined ? {data:a.data||'', whtr} : null;
+    })
+    .filter(Boolean);
+  if (whtrCtx && serieWHtR.length >= 1){
+    const labels = serieWHtR.map(x=>x.data);
+    whtrChart = new Chart(whtrCtx, {
+      type:'line',
+      data:{
+        labels,
+        datasets:[
+          { label:'WHtR', data: serieWHtR.map(x=>x.whtr), tension:.35, borderWidth:3,
+            borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,.18)', fill:true, pointRadius:4, pointHoverRadius:6 },
+          { label:'Guia 0.50', data: labels.map(()=>0.5), borderWidth:1, borderColor:'#888',
+            pointRadius:0, fill:false, borderDash:[6,4], tension:0 }
+        ]
+      },
+      options:{responsive:true,plugins:{legend:{display:false}},
+        scales:{y:{beginAtZero:false,suggestedMin:0.35,suggestedMax:0.75}}}
+    });
+    if (whtrEmpty) whtrEmpty.style.display='none';
+  } else if (whtrEmpty) whtrEmpty.style.display='block';
 }
 
 // ---------- utilidades de exportação / clipboard ----------
@@ -227,8 +373,8 @@ function pick(obj, keys){
   }
   return undefined;
 }
-const toNum = v => v == null ? undefined : Number(String(v).replace(',', '.'));
-function isFiniteNum(v){ return Number.isFinite(toNum(v)); }
+const toNumFlat = v => v == null ? undefined : Number(String(v).replace(',', '.'));
+function isFiniteNum(v){ return Number.isFinite(toNumFlat(v)); }
 
 function latestEval(cliente){
   const avs = Array.isArray(cliente?.avaliacoes) ? cliente.avaliacoes.slice() : [];
@@ -236,14 +382,14 @@ function latestEval(cliente){
   avs.sort((a,b)=> (a.data||'').localeCompare(b.data||''));
   const last = avs[avs.length - 1] || {};
 
-  const peso    = toNum(pick(last, ["peso","Peso (kg)","peso_kg"]));
-  const cintura = toNum(pick(last, ["cintura","Cintura (cm)","cintura_cm"]));
-  const quadril = toNum(pick(last, ["quadril","Quadril (cm)","quadril_cm"]));
-  const abdome  = toNum(pick(last, ["abdome","Abdome (cm)","Abdome","abdome_cm"]));
-  let   altura  = toNum(pick(last, ["altura","Altura (cm)","altura_cm","Altura (m)","altura_m"]));
+  const peso    = toNumFlat(pick(last, ["peso","Peso (kg)","peso_kg"]));
+  const cintura = toNumFlat(pick(last, ["cintura","Cintura (cm)","cintura_cm"]));
+  const quadril = toNumFlat(pick(last, ["quadril","Quadril (cm)","quadril_cm"]));
+  const abdome  = toNumFlat(pick(last, ["abdome","Abdome (cm)","Abdome","abdome_cm"]));
+  let   altura  = toNumFlat(pick(last, ["altura","Altura (cm)","altura_cm","Altura (m)","altura_m"]));
   if (isFiniteNum(altura) && altura > 0 && altura <= 3) altura = altura * 100; // m -> cm
 
-  const rcq = (isFiniteNum(cintura) && isFiniteNum(quadril) && quadril) ? (cintura / quadril) : undefined;
+  const rcq = (isFiniteNum(cintura) && isFiniteNum(quadril) && quadril) ? (cintura / quadril) : (isFiniteNum(last?.rcq) ? Number(last.rcq) : undefined);
   const rce = (isFiniteNum(cintura) && isFiniteNum(altura) && altura) ? (cintura / altura) : (isFiniteNum(last?.whtr) ? Number(last.whtr) : undefined);
 
   return { data:last.data || '', peso, cintura, quadril, abdome, altura, rcq, rce };
@@ -298,7 +444,7 @@ function formatJSONLinesWithMetrics(arr){
   }).join('\n');
 }
 
-// === Versões anteriores (mantidas, se quiser usar em outro ponto) ===
+// versões legadas (mantidas)
 function formatCSV(arr){
   if(!Array.isArray(arr)) return '';
   const fields = ['id','nome','contato','email','cidade','nivel','pontuacao','ultimoTreino','objetivo'];
@@ -306,7 +452,6 @@ function formatCSV(arr){
   const rows = arr.map(o => fields.map(f => `"${safeCell(o[f])}"`).join(','));
   return [header, ...rows].join('\n');
 }
-
 function formatJSONLines(arr){
   if(!Array.isArray(arr)) return '';
   return arr.map(o => JSON.stringify(o)).join('\n');
