@@ -4,7 +4,6 @@
 import { Store } from '../app.js';
 
 // Fallbacks de branding (caso app.js não exporte constantes)
-// Você pode definir window.BP_BRAND_NAME e window.BP_BRAND_LOGO_PNG se preferir.
 const BRAND_NAME_FALLBACK = (typeof window !== 'undefined' && window.BP_BRAND_NAME) || 'Márcio Dowglas Treinador';
 const LOGO_PNG_FALLBACK   = (typeof window !== 'undefined' && window.BP_BRAND_LOGO_PNG) || './assets/img/logo-mdpersonal.png';
 
@@ -17,13 +16,11 @@ export const RelatorioView = {
     const c = Store.byId(id);
     if (!c) return `<section class="card"><h2>Cliente não encontrada</h2></section>`;
 
-    // pega última avaliação
     const ultimaAval = (c.avaliacoes||[])
       .slice()
       .sort((a,b)=>(a.data||'').localeCompare(b.data||''))
       .pop() || {};
 
-    // normaliza treinos p/ as 2 nomenclaturas e ordena
     const treinos = (c.treinos||[])
       .slice()
       .map(t => ({
@@ -42,21 +39,28 @@ export const RelatorioView = {
     const hoje = new Date();
     const ts   = `${hoje.toLocaleDateString('pt-BR')} ${hoje.toLocaleTimeString('pt-BR')}`;
 
-    // tenta puxar branding do app.js (se existir) sem quebrar
     let BRAND_NAME = BRAND_NAME_FALLBACK;
     let RELATORIO_LOGO_PNG = LOGO_PNG_FALLBACK;
     try {
-      const mod = await import('../app.js'); // opcional
+      const mod = await import('../app.js');
       BRAND_NAME = mod.BRAND_NAME || BRAND_NAME;
       RELATORIO_LOGO_PNG = mod.RELATORIO_LOGO_PNG || RELATORIO_LOGO_PNG;
-    } catch (_) { /* segue com fallbacks */ }
+    } catch (_) {}
 
     // ---------- métricas mostradas na tabela (exibição) ----------
-    // mapeamento tolerante para variações de cabeçalho do Sheets
     const pesoVal    = pick(ultimaAval, ["peso", "Peso (kg)", "peso_kg"]);
     const cinturaVal = pick(ultimaAval, ["cintura", "Cintura (cm)", "cintura_cm"]);
     const quadrilVal = pick(ultimaAval, ["quadril", "Quadril (cm)", "quadril_cm"]);
-    const abdomeVal  = pick(ultimaAval, ["abdome", "Abdome (cm)", "Abdome", "abdome_cm"]);
+
+    // >>> AQUI: aceitar todas as variações usuais do abdômen
+    const abdomeVal  = pick(ultimaAval, [
+      "abdomen","abdome","abdomem","abdominal",
+      "abdomen_cm","abdome_cm",
+      "Abdomen (cm)","Abdome (cm)","Abdome",
+      "perimetro_abdominal","circunferencia_abdominal",
+      "Perímetro Abdominal","Circunferência Abdominal",
+      "perimetro abdominal","circunferencia abdominal"
+    ]);
 
     const peso    = nOrDash(pesoVal, 2);
     const cintura = nOrDash(cinturaVal, 0);
@@ -142,14 +146,13 @@ export const RelatorioView = {
           </div>
         </div>
 
-        <!-- Gráfico: Peso -->
+        <!-- Gráficos (Peso, RCQ, RCE) permanecem iguais -->
         <div class="r-card chart-card avoid-break" style="margin-top:14px">
           <h3 style="margin-top:0">Evolução do Peso</h3>
           <div id="pesoEmpty" class="muted" style="display:none">Sem dados de peso suficientes.</div>
           <canvas id="chartPeso" height="180"></canvas>
         </div>
 
-        <!-- Gráfico + explicação: RCQ -->
         <div class="r-card chart-card avoid-break" style="margin-top:14px">
           <div class="row" style="justify-content:space-between;align-items:flex-end;">
             <h3 style="margin:0">RCQ (Relação Cintura/Quadril)</h3>
@@ -162,13 +165,12 @@ export const RelatorioView = {
           <canvas id="chartRCQ" height="180"></canvas>
         </div>
 
-        <!-- Gráfico + explicação: RCE -->
         <div class="r-card chart-card avoid-break" style="margin-top:14px">
           <div class="row" style="justify-content:space-between;align-items:flex-end;">
             <h3 style="margin:0">RCE (Relação Cintura/Estatura)</h3>
             <div class="explain">
               <b>O que é:</b> cintura ÷ estatura. 
-              <b>Regra de bolso:</b> manter <b>&lt; 0,50</b> (cintura menor que metade da altura).
+              <b>Regra de bolso:</b> manter <b>&lt; 0,50</b>.
             </div>
           </div>
           <div id="rceNote" class="muted" style="display:none;margin-bottom:6px"></div>
@@ -223,7 +225,6 @@ export const RelatorioView = {
       }
     });
 
-    // Se Chart.js não estiver disponível, não quebra a página
     if (typeof window.Chart !== 'function') return;
 
     const c = Store.byId(id);
@@ -281,7 +282,7 @@ export const RelatorioView = {
       if (rcqEmpty) rcqEmpty.style.display = 'none';
     } else if (rcqEmpty){ rcqEmpty.style.display = 'block'; }
 
-    // ----- RCE (cintura/estatura) -----
+    // ----- RCE -----
     const note = document.getElementById('rceNote');
     const serieRCE = (c.avaliacoes || [])
       .map(a => ({ ...a, rce: calcRCE(a) }))
@@ -327,7 +328,6 @@ function isNum(v){
   const n = Number(v);
   return Number.isFinite(n);
 }
-// pega o primeiro campo existente entre múltiplas chaves possíveis
 function pick(obj, keys){
   for (const k of keys){
     const val = obj?.[k];
@@ -344,7 +344,7 @@ function calcRCE(a){
   const c = Number(a?.cintura);
   let h = Number(a?.altura);
   if (isNum(h) && h > 0 && h <= 3) h = h * 100; // metros -> cm
-  return (isNum(c) && isNum(h) && h > 0) ? (c/h) : (isNum(a?.whtr) ? Number(a.whtr) : undefined); // fallback p/ whtr gravado
+  return (isNum(c) && isNum(h) && h > 0) ? (c/h) : (isNum(a?.whtr) ? Number(a.whtr) : undefined);
 }
 function baseLineOptions(){
   return {
