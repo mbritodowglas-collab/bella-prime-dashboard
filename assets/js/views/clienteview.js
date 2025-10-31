@@ -36,15 +36,8 @@ export const ClienteView = {
     const cinturaVal = pick(ultimaAval, ["cintura", "Cintura (cm)", "cintura_cm"]);
     const quadrilVal = pick(ultimaAval, ["quadril", "Quadril (cm)", "quadril_cm"]);
 
-    // aceitar todas as variações usuais do abdômen
-    const abdomeVal  = pick(ultimaAval, [
-      "abdomen","abdome","abdomem","abdominal",
-      "abdomen_cm","abdome_cm",
-      "Abdomen (cm)","Abdome (cm)","Abdome",
-      "perimetro_abdominal","circunferencia_abdominal",
-      "Perímetro Abdominal","Circunferência Abdominal",
-      "perimetro abdominal","circunferencia abdominal"
-    ]);
+    // ✅ AJUSTE: ler direto do campo salvo na avaliação (a.abdomen)
+    const abdomeVal  = ultimaAval?.abdomen;
 
     const pesoFmt    = nOrDash(pesoVal, 2);
     const cinturaFmt = nOrDash(cinturaVal, 0);
@@ -136,7 +129,7 @@ export const ClienteView = {
         </div>
       </section>
 
-      <!-- NOVO: Métricas recentes (última avaliação) -->
+      <!-- Métricas recentes (última avaliação) -->
       <section class="card">
         <h3 style="margin-top:0">Métricas recentes</h3>
         <div class="table-wrap" style="overflow:auto">
