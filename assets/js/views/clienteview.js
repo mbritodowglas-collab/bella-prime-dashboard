@@ -5,7 +5,7 @@ import { Store, PROFESSOR_FORM_URL } from '../app.js';
 
 let pesoChart = null;
 let rcqChart  = null;
-let whtrChart = null;
+let rceChart  = null;
 
 export const ClienteView = {
   async template(id){
@@ -105,7 +105,7 @@ export const ClienteView = {
         ${c.contato ? `<p><b>WhatsApp:</b> ${escapeHTML(c.contato)}</p>` : ''}
         <div class="row" style="gap:10px;margin-top:12px">
           ${ctaProfessor}
-          <a class="btn btn-outline" href="#/relatorio/${c.id}">🧾 Relatório (A4)</a> <!-- ADD -->
+          <a class="btn btn-outline" href="#/relatorio/${c.id}">🧾 Relatório (A4)</a>
         </div>
       </section>
 
@@ -135,16 +135,22 @@ export const ClienteView = {
       </section>
 
       <section class="card chart-card">
-        <h3>Evolução da Relação Cintura/Quadril (RCQ)</h3>
+        <div class="row" style="justify-content:space-between;align-items:flex-end;">
+          <h3 style="margin:0">Relação Cintura/Quadril (RCQ)</h3>
+          <small style="opacity:.85">cintura ÷ quadril • alvo (mulheres): ~&lt; 0,85</small>
+        </div>
         <div id="rcqEmpty" style="display:none;color:#aaa">Sem dados de cintura/quadril suficientes.</div>
         <canvas id="chartRCQ" height="160"></canvas>
       </section>
 
       <section class="card chart-card">
-        <h3>Relação Cintura/Estatura (WHtR)</h3>
-        <div id="whtrEmpty" style="display:none;color:#aaa">Sem dados de cintura/estatura suficientes.</div>
-        <canvas id="chartWHtR" height="160"></canvas>
-        <small style="opacity:.75">Linha guia 0,50 = meta de saúde (cintura &lt; 50% da estatura).</small>
+        <div class="row" style="justify-content:space-between;align-items:flex-end;">
+          <h3 style="margin:0">RCE (cintura/estatura)</h3>
+          <small style="opacity:.85">regra de bolso: manter &lt; 0,50</small>
+        </div>
+        <div id="rceEmpty" style="display:none;color:#aaa">Sem dados de cintura/estatura suficientes.</div>
+        <canvas id="chartRCE" height="160"></canvas>
+        <small style="opacity:.75">Linha guia 0,50 = cintura menor que metade da altura.</small>
       </section>
     `;
   },
@@ -232,57 +238,55 @@ export const ClienteView = {
       .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
     if (rcqChart) rcqChart.destroy();
     if (rcqCtx && serieRCQ.length >= 1) {
+      const labels = serieRCQ.map(a => a.data || '');
       rcqChart = new Chart(rcqCtx, {
         type: 'line',
         data: {
-          labels: serieRCQ.map(a => a.data || ''),
-          datasets: [{
-            label: 'RCQ',
-            data: serieRCQ.map(a => Number(a.rcq)),
-            tension: 0.35, borderWidth: 3,
-            borderColor: '#d4af37', backgroundColor: 'rgba(212,175,55,0.18)',
-            fill: true, pointRadius: 4, pointHoverRadius: 6
-          }]
+          labels,
+          datasets: [
+            { label: 'RCQ', data: serieRCQ.map(a => Number(a.rcq)), tension: 0.35, borderWidth: 3,
+              borderColor: '#d4af37', backgroundColor: 'rgba(212,175,55,0.18)', fill: true, pointRadius: 4, pointHoverRadius: 6 }
+          ]
         },
         options: { responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:false } } }
       });
       if (rcqEmpty) rcqEmpty.style.display = 'none';
     } else if (rcqEmpty) { rcqEmpty.style.display = 'block'; }
 
-    // WHtR
-    const whtrCtx = document.getElementById('chartWHtR');
-    const whtrEmpty = document.getElementById('whtrEmpty');
-    const serieWHtR = (c.avaliacoes || [])
+    // RCE (WHtR)
+    const rceCtx = document.getElementById('chartRCE');
+    const rceEmpty = document.getElementById('rceEmpty');
+    const serieRCE = (c.avaliacoes || [])
       .map(a => {
         const cintura = toNum(a.cintura);
         let altura = toNum(a.altura);
         if (typeof altura === 'number' && altura <= 3) altura = altura*100; // se veio em metros
-        const whtr = (typeof a.whtr === 'number' && !isNaN(a.whtr))
+        const rce = (typeof a.whtr === 'number' && !isNaN(a.whtr))
           ? a.whtr
           : (Number.isFinite(cintura) && Number.isFinite(altura) && altura !== 0 ? cintura/altura : undefined);
-        return { ...a, whtr };
+        return { ...a, rce };
       })
-      .filter(a => typeof a.whtr === 'number' && !isNaN(a.whtr))
+      .filter(a => typeof a.rce === 'number' && !isNaN(a.rce))
       .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
-    if (whtrChart) whtrChart.destroy();
-    if (whtrCtx && serieWHtR.length >= 1) {
-      const labels = serieWHtR.map(a => a.data || '');
-      whtrChart = new Chart(whtrCtx, {
+    if (rceChart) rceChart.destroy();
+    if (rceCtx && serieRCE.length >= 1) {
+      const labels = serieRCE.map(a => a.data || '');
+      rceChart = new Chart(rceCtx, {
         type: 'line',
         data: {
           labels,
           datasets: [
-            { label:'WHtR', data: serieWHtR.map(a=>Number(a.whtr)), tension:0.35, borderWidth:3,
+            { label:'RCE', data: serieRCE.map(a=>Number(a.rce)), tension:0.35, borderWidth:3,
               borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,0.18)', fill:true, pointRadius:4, pointHoverRadius:6 },
-            { label:'Guia 0.50', data: labels.map(()=>0.5), borderWidth:1, borderColor:'#888',
+            { label:'Guia 0,50', data: labels.map(()=>0.5), borderWidth:1, borderColor:'#888',
               pointRadius:0, fill:false, borderDash:[6,4], tension:0 }
           ]
         },
         options: { responsive:true, plugins:{ legend:{ display:false } },
           scales:{ y:{ beginAtZero:false, suggestedMin:0.35, suggestedMax:0.75 } } }
       });
-      if (whtrEmpty) whtrEmpty.style.display = 'none';
-    } else if (whtrEmpty) { whtrEmpty.style.display = 'block'; }
+      if (rceEmpty) rceEmpty.style.display = 'none';
+    } else if (rceEmpty) { rceEmpty.style.display = 'block'; }
   }
 };
 
