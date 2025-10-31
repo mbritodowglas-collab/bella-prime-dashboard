@@ -53,7 +53,7 @@ export const DashboardView = {
               <th style="width:180px;text-align:right;">Ações</th> <!-- largura maior -->
             </tr>
           </thead>
-          <tbody id="tbody"></tbody>
+        <tbody id="tbody"></tbody>
         </table>
         <div id="empty" style="display:none;padding:12px;color:#aaa">Sem clientes para exibir.</div>
       </section>
@@ -132,15 +132,15 @@ export const DashboardView = {
       }
     });
 
-    // --- Novas ações: copiar CSV / JSONL ---
+    // --- Novas ações: copiar CSV / JSONL (com métricas normalizadas) ---
     $('#copyCsvBtn').addEventListener('click', async ()=>{
-      const csv = formatCSV(Store.state.clientes);
+      const csv = formatCSVWithMetrics(Store.state.clientes);
       await copyToClipboard(csv);
       toast('CSV copiado para o clipboard.');
     });
 
     $('#copyJsonLinesBtn').addEventListener('click', async ()=>{
-      const jl = formatJSONLines(Store.state.clientes);
+      const jl = formatJSONLinesWithMetrics(Store.state.clientes);
       await copyToClipboard(jl);
       toast('JSON Lines copiado para o clipboard.');
     });
@@ -191,6 +191,7 @@ function chartNiveis(){
   const el = document.getElementById('chartNiveis');
   if (!el) return;
   if (chartRef) chartRef.destroy();
+  if (typeof window.Chart !== 'function') return; // fail-safe
 
   const arr = Store.state.clientes;
   chartRef = new Chart(el, {
@@ -218,6 +219,86 @@ function safeCell(v){
   return String(v).replace(/\r?\n/g,' ').replace(/"/g,'""');
 }
 
+// === Nova camada de normalização (última avaliação + métricas) ===
+function pick(obj, keys){
+  for (const k of keys){
+    const val = obj?.[k];
+    if (val != null && String(val).trim() !== '') return val;
+  }
+  return undefined;
+}
+const toNum = v => v == null ? undefined : Number(String(v).replace(',', '.'));
+function isFiniteNum(v){ return Number.isFinite(toNum(v)); }
+
+function latestEval(cliente){
+  const avs = Array.isArray(cliente?.avaliacoes) ? cliente.avaliacoes.slice() : [];
+  if (avs.length === 0) return {};
+  avs.sort((a,b)=> (a.data||'').localeCompare(b.data||''));
+  const last = avs[avs.length - 1] || {};
+
+  const peso    = toNum(pick(last, ["peso","Peso (kg)","peso_kg"]));
+  const cintura = toNum(pick(last, ["cintura","Cintura (cm)","cintura_cm"]));
+  const quadril = toNum(pick(last, ["quadril","Quadril (cm)","quadril_cm"]));
+  const abdome  = toNum(pick(last, ["abdome","Abdome (cm)","Abdome","abdome_cm"]));
+  let   altura  = toNum(pick(last, ["altura","Altura (cm)","altura_cm","Altura (m)","altura_m"]));
+  if (isFiniteNum(altura) && altura > 0 && altura <= 3) altura = altura * 100; // m -> cm
+
+  const rcq = (isFiniteNum(cintura) && isFiniteNum(quadril) && quadril) ? (cintura / quadril) : undefined;
+  const rce = (isFiniteNum(cintura) && isFiniteNum(altura) && altura) ? (cintura / altura) : (isFiniteNum(last?.whtr) ? Number(last.whtr) : undefined);
+
+  return { data:last.data || '', peso, cintura, quadril, abdome, altura, rcq, rce };
+}
+
+// CSV com métricas normalizadas
+function formatCSVWithMetrics(arr){
+  if(!Array.isArray(arr)) return '';
+  const fields = [
+    'id','nome','contato','email','cidade','nivel','pontuacao','ultimoTreino','objetivo',
+    // métricas da última avaliação (normalizadas)
+    'data_avaliacao','peso','cintura','quadril','abdome','rcq','rce'
+  ];
+  const header = fields.join(',');
+  const rows = arr.map(o => {
+    const m = latestEval(o);
+    const row = {
+      id: o.id, nome: o.nome, contato: o.contato, email: o.email, cidade: o.cidade,
+      nivel: o.nivel, pontuacao: o.pontuacao, ultimoTreino: o.ultimoTreino, objetivo: o.objetivo,
+      data_avaliacao: m.data || '',
+      peso:    isFinite(m.peso)    ? String(m.peso).replace('.', ',') : '',
+      cintura: isFinite(m.cintura) ? String(m.cintura).replace('.', ',') : '',
+      quadril: isFinite(m.quadril) ? String(m.quadril).replace('.', ',') : '',
+      abdome:  isFinite(m.abdome)  ? String(m.abdome).replace('.', ',') : '',
+      rcq:     isFinite(m.rcq)     ? String(m.rcq.toFixed(3)).replace('.', ',') : '',
+      rce:     isFinite(m.rce)     ? String(m.rce.toFixed(3)).replace('.', ',') : ''
+    };
+    return fields.map(f => `"${safeCell(row[f])}"`).join(',');
+  });
+  return [header, ...rows].join('\n');
+}
+
+// JSON Lines com métricas normalizadas
+function formatJSONLinesWithMetrics(arr){
+  if(!Array.isArray(arr)) return '';
+  return arr.map(o => {
+    const m = latestEval(o);
+    return JSON.stringify({
+      id: o.id, nome: o.nome, contato: o.contato, email: o.email, cidade: o.cidade,
+      nivel: o.nivel, pontuacao: o.pontuacao, ultimoTreino: o.ultimoTreino, objetivo: o.objetivo,
+      avaliacao: {
+        data: m.data || null,
+        peso: m.peso ?? null,
+        cintura: m.cintura ?? null,
+        quadril: m.quadril ?? null,
+        abdome: m.abdome ?? null,
+        altura_cm: m.altura ?? null,
+        rcq: m.rcq ?? null,
+        rce: m.rce ?? null
+      }
+    });
+  }).join('\n');
+}
+
+// === Versões anteriores (mantidas, se quiser usar em outro ponto) ===
 function formatCSV(arr){
   if(!Array.isArray(arr)) return '';
   const fields = ['id','nome','contato','email','cidade','nivel','pontuacao','ultimoTreino','objetivo'];
