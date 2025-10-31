@@ -5,17 +5,17 @@
 import { DashboardView } from './views/dashboardview.js';
 import { ClienteView }   from './views/clienteview.js';
 import { AvaliacaoView } from './views/avaliacaoview.js';
-import { TreinoView }    from './views/treinoview.js';    // <<< NOVO
-import { RelatorioView } from './views/relatorioview.js'; // <<< NOVO
+import { TreinoView }    from './views/treinoview.js';
+import { RelatorioView } from './views/relatorioview.js';
 
 // ---------- Config gerais ----------
 const SHEETS_API = 'https://script.google.com/macros/s/AKfycbyAafbpJDWr4RF9hdTkzmnLLv1Ge258hk6jlnDo7ng2kk88GoWyJzp63rHZPMDJA-wy/exec';
 
-// Branding usado pelo Relatório (lido pelo RelatorioView via import dinâmico)
+// Branding (lido pelo RelatorioView via import dinâmico)
 export const BRAND_NAME = 'Bella Prime';
 export const RELATORIO_LOGO_PNG = './assets/img/logo-relatorio.png';
 
-// Pré-preenchimento do Form do Professor (Google Forms)
+// Form do Professor (pré-preenchido)
 export const PROFESSOR_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLScvQBCSEVdTspYgelGI0zWbrK21ttO1IUKuf9_j5rO_a2czfA/viewform?usp=header';
 
 // ---------- Datas ----------
@@ -36,6 +36,23 @@ const pick = (obj, keys) => {
   for (const k of keys) if (obj[k] !== undefined && obj[k] !== '') return obj[k];
   return undefined;
 };
+
+// novo: busca “fuzzy” por regex no NOME da coluna (já normalizado com strip)
+function pickByRegex(obj, regexArr){
+  for (const [k, v] of Object.entries(obj || {})) {
+    if (v === undefined || v === null || String(v).trim() === '') continue;
+    for (const rx of regexArr){
+      if (rx.test(k)) return v;
+    }
+  }
+  return undefined;
+}
+function toNum(v){
+  if (v === undefined || v === null || v === '') return undefined;
+  const n = Number(String(v).replace(',', '.'));
+  return Number.isFinite(n) ? n : undefined;
+}
+
 const normNivel = (x='') => {
   const n = strip(x);
   if (n.startsWith('fund')) return 'Fundação';
@@ -58,11 +75,13 @@ function collectAnswersFromRaw(raw){
     'pontuacao','pontuação','score','pontos','nota',
     'ultimotreino','ultimaavaliacao','dataavaliacao','data',
     'renovacaodias','renovacao','ciclodias',
-    // métricas extraídas separadamente
+    // métricas que extraímos separadamente
     'peso','peso (kg)','peso kg',
     'cintura','cintura (cm)','cintura cm',
     'quadril','quadril (cm)','quadril cm',
-    // campos do form do professor
+    'altura','estatura','altura (cm)','height',
+    'abdomen','abdomem','perimetro abdominal','circunferencia abdominal',
+    // form do professor
     'novo_nivel','novonivel','nivel_novo','nivel aprovado','nivel_aprovado','nivel_definido',
     'aprovado','aprovacao','aprovação','aprovacao_professor','ok','apto','apta',
     'data_decisao','data_upgrade','data_mudanca','data da decisao',
@@ -136,15 +155,17 @@ export const Store = {
         const pontForm = Number(pick(o, ['pontuacao','pontuação','score','nota']) || 0);
         const nivelIn  = pick(o, ['nivel','nível','fase','faixa']);
 
-        // ---- MÉTRICAS ANTROPOMÉTRICAS ----
-        const pesoRaw    = pick(o, ['peso','peso (kg)','peso kg']);
-        const cinturaRaw = pick(o, ['cintura','cintura (cm)','cintura cm']);
-        const quadrilRaw = pick(o, ['quadril','quadril (cm)','quadril cm']);
+        // ---- MÉTRICAS (fuzzy) ----
+        const pesoN     = toNum(pickByRegex(o, [/^peso\b/, /\bpeso \(kg\)/]));
+        const cinturaN  = toNum(pickByRegex(o, [/\bcintura\b/]));
+        const quadrilN  = toNum(pickByRegex(o, [/\bquadril\b/]));
+        const alturaRaw = toNum(pickByRegex(o, [/\baltura\b/, /\bestatura\b/, /\baltura \(cm\)\b/, /\bheight\b/]));
+        // altura em cm; se vier em metros (<=3), converte pra cm
+        const alturaN   = (typeof alturaRaw === 'number' && alturaRaw <= 3) ? alturaRaw*100 : alturaRaw;
+        const abdomenN  = toNum(pickByRegex(o, [/\babdomen\b/, /\babdomem\b/, /perimetro abdominal/, /circunferencia abdominal/]));
 
-        const peso    = (pesoRaw    !== undefined && pesoRaw !== '')    ? Number(String(pesoRaw).replace(',', '.'))    : undefined;
-        const cintura = (cinturaRaw !== undefined && cinturaRaw !== '') ? Number(String(cinturaRaw).replace(',', '.')) : undefined;
-        const quadril = (quadrilRaw !== undefined && quadrilRaw !== '') ? Number(String(quadrilRaw).replace(',', '.')) : undefined;
-        const rcq = (cintura && quadril && quadril !== 0) ? (cintura / quadril) : undefined;
+        const rcqCalc   = (Number.isFinite(cinturaN) && Number.isFinite(quadrilN) && quadrilN !== 0) ? (cinturaN / quadrilN) : undefined;
+        const whtrCalc  = (Number.isFinite(cinturaN) && Number.isFinite(alturaN)  && alturaN  !== 0) ? (cinturaN / alturaN)  : undefined;
 
         // nível default
         const nivelDefault = (() => {
@@ -169,11 +190,11 @@ export const Store = {
           ultimoTreino: dataAval || undefined,
           renovacaoDias: Number(pick(o,['renovacaodias','renovacao','ciclodias'])) || 30,
           avaliacoes: [],
-          treinos: [], // histórico de treinos lançados
+          treinos: [],
           _answers: collectAnswersFromRaw(raw)
         };
 
-        // --- Detecta linha do Formulário do Professor (upgrade de nível) ---
+        // --- Detecta Form do Professor (upgrade) ---
         const novoNivelRaw = pick(o, [
           'novo_nivel','novonivel','nivel_novo','nivel aprovado','nivel_aprovado','nivel_definido'
         ]);
@@ -190,29 +211,32 @@ export const Store = {
           base._upgradeEvent = { aprovado, novoNivel, data: dataUp, obs: obsProf || '' };
         }
 
-        // --- Pontuação automática por respostas (fallback se não há nota explícita) ---
+        // --- Pontuação automática por respostas (fallback) ---
         if ((!pontForm || isNaN(pontForm)) && base._answers && Object.keys(base._answers).length){
           const auto = calcularPontuacao(base._answers);
           base.pontuacao = auto;
           base.nivel = nivelPorPontuacao(auto);
         }
 
-        // adiciona avaliação com métricas + parecer
-        if (dataAval || !isNaN(base.pontuacao) || peso !== undefined || cintura !== undefined || quadril !== undefined) {
+        // --- Registrar avaliação (com métricas) ---
+        if (dataAval || Number.isFinite(base.pontuacao) || Number.isFinite(pesoN) || Number.isFinite(cinturaN) || Number.isFinite(quadrilN) || Number.isFinite(alturaN) || Number.isFinite(abdomenN)) {
           const dataISO = /^\d{4}-\d{2}-\d{2}$/.test(String(dataAval)) ? String(dataAval) : todayISO();
           const sugestaoNivel = nivelPorPontuacao(base.pontuacao);
           const readiness = prontidaoPorPontuacao(base.pontuacao);
 
           base.avaliacoes.push({
             data: dataISO,
-            pontuacao: isNaN(base.pontuacao) ? 0 : base.pontuacao,
+            pontuacao: Number.isFinite(base.pontuacao) ? base.pontuacao : 0,
             nivel: base.nivel,
             sugestaoNivel,
             readiness,
-            peso: isNaN(peso) ? undefined : peso,
-            cintura: isNaN(cintura) ? undefined : cintura,
-            quadril: isNaN(quadril) ? undefined : quadril,
-            rcq: (typeof rcq === 'number' && !isNaN(rcq)) ? rcq : undefined
+            peso: Number.isFinite(pesoN) ? pesoN : undefined,
+            cintura: Number.isFinite(cinturaN) ? cinturaN : undefined,
+            quadril: Number.isFinite(quadrilN) ? quadrilN : undefined,
+            altura: Number.isFinite(alturaN) ? alturaN : undefined,      // << NOVO
+            abdomen: Number.isFinite(abdomenN) ? abdomenN : undefined,   // << NOVO
+            rcq: Number.isFinite(rcqCalc) ? rcqCalc : undefined,         // << NOVO
+            whtr: Number.isFinite(whtrCalc) ? whtrCalc : undefined       // << NOVO
           });
         }
         return base;
@@ -226,15 +250,13 @@ export const Store = {
         for (const f of ['nome','contato','email','cidade']) if (!dst[f] && r[f]) dst[f] = r[f];
         dst.avaliacoes = [...(dst.avaliacoes||[]), ...(r.avaliacoes||[])];
         if (!Array.isArray(dst.treinos)) dst.treinos = [];
-
-        // acumula upgrades do professor
         if (r._upgradeEvent) {
           if (!Array.isArray(dst._allUpgrades)) dst._allUpgrades = [];
           dst._allUpgrades.push(r._upgradeEvent);
         }
       }
 
-      // ordena histórico + calcula prontidão consecutiva e elegibilidade
+      // ordena histórico + flags
       const list = [...map.values()];
       for (const c of list) {
         if (Array.isArray(c.avaliacoes)) {
@@ -293,7 +315,7 @@ export const Store = {
     this.persist();
   },
 
-  // ------- Suporte a Export/Import usados no Dashboard -------
+  // Export/Import
   exportJSON(){
     try{
       const blob = new Blob([JSON.stringify(this.state.clientes, null, 2)], {type:'application/json'});
@@ -335,7 +357,7 @@ export function statusCalc(c){
   return            { label:'Vencida',              klass:'st-bad'  };
 }
 
-// ---------- Programas permitidos por nível ----------
+// ---------- Programas por nível ----------
 export function programsByLevel(nivel){
   switch (nivel) {
     case 'Fundação': return ['ABC','ABCD'];
@@ -346,7 +368,7 @@ export function programsByLevel(nivel){
   }
 }
 
-// ---------- Intensidades (para Domínio/OverPrime) ----------
+// ---------- Intensidades (Domínio/OverPrime) ----------
 const INTENSIDADES_AVANCADAS = [
   'Base Intermediária (≈65–70%)',
   'Densidade / Hipertrofia (≈70–75%)',
@@ -393,7 +415,6 @@ export function calcularPontuacao(respostas) {
 }
 
 export function nivelPorPontuacao(score) {
-  // Faixas: ≤3.5 Fundação | 3.6–5.9 Ascensão | ≥6 Domínio
   if (score <= 3.5) return 'Fundação';
   if (score <= 5.9) return 'Ascensão';
   return 'Domínio';
@@ -421,8 +442,8 @@ const routes = [
   { path: new RegExp('^#\\/$'),                             view: DashboardView },
   { path: new RegExp('^#\\/cliente\\/' + idRe + '$'),       view: ClienteView   },
   { path: new RegExp('^#\\/avaliacao\\/' + idRe + '$'),     view: AvaliacaoView },
-  { path: new RegExp('^#\\/treino\\/' + idRe + '\\/novo$'), view: TreinoView    }, // NOVO
-  { path: new RegExp('^#\\/relatorio\\/' + idRe + '$'),     view: RelatorioView }, // NOVO
+  { path: new RegExp('^#\\/treino\\/' + idRe + '\\/novo$'), view: TreinoView    },
+  { path: new RegExp('^#\\/relatorio\\/' + idRe + '$'),     view: RelatorioView },
 ];
 
 async function render(){
@@ -475,7 +496,7 @@ html,body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,s
 .td-actions .btn + .btn{margin-left:12px;}
 .td-actions .btn-danger{filter:saturate(1.1);}
 
-/* Mobile: tabela em formato “cards” */
+/* Mobile: tabela em “cards” */
 @media(max-width:640px){
   .table{min-width:unset;}
   .table thead{display:none;}
@@ -513,7 +534,7 @@ function enhanceTables(){
   });
 }
 
-// Hooka o render para aplicar o patch em todas as telas
+// Hook no render para aplicar o patch em todas as telas
 const _origRender = render;
 render = async function(){
   ensureStylesInjected();
