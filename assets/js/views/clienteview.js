@@ -26,6 +26,33 @@ export const ClienteView = {
         </tr>
       `).join('');
 
+    // --- última avaliação (para métricas recentes) ---
+    const ultimaAval = (c.avaliacoes || [])
+      .slice()
+      .sort((a,b)=>(a.data||'').localeCompare(b.data||''))
+      .pop() || {};
+
+    const pesoVal    = pick(ultimaAval, ["peso", "Peso (kg)", "peso_kg"]);
+    const cinturaVal = pick(ultimaAval, ["cintura", "Cintura (cm)", "cintura_cm"]);
+    const quadrilVal = pick(ultimaAval, ["quadril", "Quadril (cm)", "quadril_cm"]);
+
+    // aceitar todas as variações usuais do abdômen
+    const abdomeVal  = pick(ultimaAval, [
+      "abdomen","abdome","abdomem","abdominal",
+      "abdomen_cm","abdome_cm",
+      "Abdomen (cm)","Abdome (cm)","Abdome",
+      "perimetro_abdominal","circunferencia_abdominal",
+      "Perímetro Abdominal","Circunferência Abdominal",
+      "perimetro abdominal","circunferencia abdominal"
+    ]);
+
+    const pesoFmt    = nOrDash(pesoVal, 2);
+    const cinturaFmt = nOrDash(cinturaVal, 0);
+    const quadrilFmt = nOrDash(quadrilVal, 0);
+    const abdomeFmt  = nOrDash(abdomeVal, 0);
+    const rcqFmt     = nOrDash(calcRCQ(ultimaAval), 3);
+    const rceFmt     = nOrDash(calcRCE(ultimaAval), 3);
+
     // --- respostas completas (para copiar) ---
     let blocoRespostas = '';
     if (c._answers && Object.keys(c._answers).length > 0) {
@@ -109,6 +136,32 @@ export const ClienteView = {
         </div>
       </section>
 
+      <!-- NOVO: Métricas recentes (última avaliação) -->
+      <section class="card">
+        <h3 style="margin-top:0">Métricas recentes</h3>
+        <div class="table-wrap" style="overflow:auto">
+          <table class="table" style="min-width:640px">
+            <thead>
+              <tr>
+                <th>Data</th><th>Peso (kg)</th><th>Cintura (cm)</th><th>Quadril (cm)</th><th>Abdome (cm)</th><th>RCQ</th><th>RCE</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>${ultimaAval.data || '-'}</td>
+                <td>${pesoFmt}</td>
+                <td>${cinturaFmt}</td>
+                <td>${quadrilFmt}</td>
+                <td>${abdomeFmt}</td>
+                <td>${rcqFmt}</td>
+                <td>${rceFmt}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <small style="opacity:.75">Os valores são lidos das avaliações registradas (não do bloco “Respostas completas”).</small>
+      </section>
+
       <section class="card">
         <div class="row" style="justify-content:space-between;align-items:center;gap:10px">
           <h3 style="margin:0">Treinos Registrados</h3>
@@ -146,7 +199,7 @@ export const ClienteView = {
       <section class="card chart-card">
         <div class="row" style="justify-content:space-between;align-items:flex-end;">
           <h3 style="margin:0">RCE (cintura/estatura)</h3>
-          <small style="opacity:.85">regra de bolso: manter &lt; 0,50</small>
+        <small style="opacity:.85">regra de bolso: manter &lt; 0,50</small>
         </div>
         <div id="rceEmpty" style="display:none;color:#aaa">Sem dados de cintura/estatura suficientes.</div>
         <canvas id="chartRCE" height="160"></canvas>
@@ -300,6 +353,30 @@ function toNum(v){
   if (v === undefined || v === null || v === '') return undefined;
   const n = Number(String(v).replace(',', '.'));
   return Number.isFinite(n) ? n : undefined;
+}
+function nOrDash(v, d=0){
+  if (v == null || v === '') return '-';
+  const n = Number(String(v).replace(',', '.'));
+  return Number.isFinite(n) ? n.toFixed(d) : '-';
+}
+function isNum(v){ return Number.isFinite(Number(v)); }
+function pick(obj, keys){
+  for (const k of keys){
+    const val = obj?.[k];
+    if (val != null && String(val).trim() !== '') return val;
+  }
+  return undefined;
+}
+function calcRCQ(a){
+  const c = Number(a?.cintura);
+  const q = Number(a?.quadril);
+  return (isNum(c) && isNum(q) && q !== 0) ? (c/q) : undefined;
+}
+function calcRCE(a){
+  const c = Number(a?.cintura);
+  let h = Number(a?.altura);
+  if (isNum(h) && h > 0 && h <= 3) h = h * 100; // metros -> cm
+  return (isNum(c) && isNum(h) && h > 0) ? (c/h) : (isNum(a?.whtr) ? Number(a.whtr) : undefined);
 }
 function badgeColor(readiness){
   if (readiness === 'Pronta para subir') return '#2e7d32';
