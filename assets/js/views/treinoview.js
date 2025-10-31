@@ -126,19 +126,48 @@ function renderIntensidades(nivel){
 function extrairRestricoes(ans){
   const linhas = Object.entries(ans||{});
   const picks = [];
-  const KW = ['asma','lesão','lesao','dor','lombar','joelho','ombro','tendinite','condromalácia','hernia','hérnia','hipertensão','pressão alta','diabetes','gestação','gravidez','cardíaco','cardiaco'];
+
+  // palavras-chave de locais/condições + mapeamento para frase amigável
+  const KW = [
+    'quadril','lombar','costas','coluna','joelho','ombro','cervical','tornozelo','cotovelo','punho',
+    'tendinite','condromalácia','hernia','hérnia','asma','hipertensão','pressão alta','diabetes','gestação','gravidez','cardíaco','cardiaco','rigidez','dor'
+  ];
+  const LABEL = {
+    quadril: 'dor no quadril',
+    lombar: 'dor lombar',
+    costas: 'dor nas costas',
+    coluna: 'dor na coluna',
+    joelho: 'dor no joelho',
+    ombro: 'dor no ombro',
+    cervical: 'dor cervical',
+    tornozelo: 'dor no tornozelo',
+    cotovelo: 'dor no cotovelo',
+    punho: 'dor no punho',
+    rigidez: 'rigidez articular'
+  };
+
   for (const [k,vRaw] of linhas){
-    const kL = k.toLowerCase();
-    const v = String(vRaw||'').toLowerCase();
-    const marcouSim = /(^|\b)(sim|tenho|possuo|diagnosticada|asma)(\b|$)/.test(v);
-    const matchKW = KW.find(w => v.includes(w) || kL.includes(w));
-    const pareceExemplo = /(exemplo|ex:|ex\.|por exemplo)/.test(v);
-    if ((marcouSim || matchKW) && !pareceExemplo){
-      const item = matchKW ? matchKW : (kL.includes('asma') ? 'asma' : null);
-      if (item && !picks.includes(item)) picks.push(item);
+    const kL = String(k||'').toLowerCase();
+    const v  = String(vRaw||'').toLowerCase();
+
+    // perguntas do tipo "Qual lesão?/Onde dói?/Local da dor?"
+    const qLocal = /qual les[aã]o|onde d[óo]i|local da dor|regi[aã]o/.test(kL);
+    if (qLocal && v.trim()){
+      const kw = KW.find(w => v.includes(w));
+      picks.push(kw ? (LABEL[kw] || kw) : v.trim());
+      continue;
+    }
+
+    const marcouSim  = /(^|\b)(sim|tenho|possuo|diagnosticada|asma)(\b|$)/.test(v);
+    const matchKW    = KW.find(w => v.includes(w) || kL.includes(w));
+    const exemploTxt = /(exemplo|ex:|ex\.|por exemplo)/.test(v);
+    if ((marcouSim || matchKW) && !exemploTxt){
+      if (matchKW) picks.push(LABEL[matchKW] || matchKW);
     }
   }
-  return picks.length ? `atenção a: ${picks.join(', ')}` : '';
+
+  const uniq = [...new Set(picks.map(s => s.replace(/\s+/g,' ').trim()))];
+  return uniq.length ? `atenção a: ${uniq.join(', ')}` : '';
 }
 
 // ---------- View ----------
