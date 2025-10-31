@@ -5,7 +5,7 @@ import { Store } from '../app.js';
 
 // Fallbacks de branding (caso app.js não exporte constantes)
 // Você pode definir window.BP_BRAND_NAME e window.BP_BRAND_LOGO_PNG se preferir.
-const BRAND_NAME_FALLBACK = (typeof window !== 'undefined' && window.BP_BRAND_NAME) || 'Márcio Dowglas Personal Trainer';
+const BRAND_NAME_FALLBACK = (typeof window !== 'undefined' && window.BP_BRAND_NAME) || 'Márcio Dowglas Treinador';
 const LOGO_PNG_FALLBACK   = (typeof window !== 'undefined' && window.BP_BRAND_LOGO_PNG) || './assets/img/logo-mdpersonal.png';
 
 let pesoChart = null;
