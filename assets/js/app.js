@@ -62,6 +62,41 @@ const normNivel = (x='') => {
   return '';
 };
 
+// ---------- % Gordura (Marinha EUA) ----------
+function cmToIn(cm){ return Number.isFinite(cm) ? (cm / 2.54) : undefined; }
+function log10(x){ return Math.log(x) / Math.LN10; }
+
+/**
+ * Calcula %G Marinha EUA.
+ * @param {'F'|'M'} sexo - 'F' feminino, 'M' masculino
+ * @param {number} cinturaCm
+ * @param {number} quadrilCm - obrigatório para mulheres
+ * @param {number} pescocoCm
+ * @param {number} alturaCm
+ * @returns {number|undefined} bodyfat em %, com 1 casa (ex.: 27.3)
+ */
+function navyBodyFat(sexo, cinturaCm, quadrilCm, pescocoCm, alturaCm){
+  const C = cmToIn(cinturaCm);
+  const H = cmToIn(alturaCm);
+  const N = cmToIn(pescocoCm);
+  const Q = cmToIn(quadrilCm);
+  if (!Number.isFinite(C) || !Number.isFinite(H) || !Number.isFinite(N)) return undefined;
+
+  if (sexo === 'M'){
+    const diff = C - N;
+    if (diff <= 0) return undefined;
+    const bf = 86.010 * log10(diff) - 70.041 * log10(H) + 36.76;
+    return Number.isFinite(bf) ? Number(Math.max(0, bf).toFixed(1)) : undefined;
+  } else {
+    // feminino: precisa de quadril
+    if (!Number.isFinite(Q)) return undefined;
+    const sum = C + Q - N;
+    if (sum <= 0) return undefined;
+    const bf = 163.205 * log10(sum) - 97.684 * log10(H) - 78.387;
+    return Number.isFinite(bf) ? Number(Math.max(0, bf).toFixed(1)) : undefined;
+  }
+}
+
 // Coleta todas as respostas do Sheets (para consulta completa no perfil)
 function collectAnswersFromRaw(raw){
   if (!raw) return {};
@@ -80,12 +115,16 @@ function collectAnswersFromRaw(raw){
     'cintura','cintura (cm)','cintura cm',
     'quadril','quadril (cm)','quadril cm',
     'altura','estatura','altura (cm)','height',
-    // >>> abdômen (todas as variações comuns para não cair em _answers)
+    // abdômen (todas as variações comuns para não cair em _answers)
     'abdome','abdome (cm)','abdome cm',
     'abdomen','abdomen (cm)','abdomen cm',
     'abdomem','abdomem (cm)','abdomem cm',
     'perimetro abdominal','perimetro abdominal (cm)','perimetro abdominal cm',
     'circunferencia abdominal','circunferencia abdominal (cm)','circunferencia abdominal cm',
+    // pescoço (para %G)
+    'pescoço','pescoco','circunferencia do pescoco','pescoço (cm)','pescoco (cm)',
+    // sexo/gênero (para %G)
+    'sexo','gênero','genero','sexo biologico','sexo biológico',
     // form do professor
     'novo_nivel','novonivel','nivel_novo','nivel aprovado','nivel_aprovado','nivel_definido',
     'aprovado','aprovacao','aprovação','aprovacao_professor','ok','apto','apta',
@@ -168,14 +207,30 @@ export const Store = {
         // altura em cm; se vier em metros (<=3), converte pra cm
         const alturaN   = (typeof alturaRaw === 'number' && alturaRaw <= 3) ? alturaRaw*100 : alturaRaw;
 
-        // >>> Abdômen (todas as formas comuns)
+        // Abdômen (todas as formas comuns)
         const abdomenN  = toNum(pickByRegex(o, [
           /\babdome\b/, /\babdomen\b/, /\babdomem\b/, /\babdominal\b/,
           /perimetro abdominal/, /circunferencia abdominal/
         ]));
 
+        // Pescoço (para %G)
+        const pescocoN  = toNum(pickByRegex(o, [
+          /\bpesco[cç]o\b/, /circunferencia do pesco[cç]o/
+        ]));
+
+        // Sexo / gênero (para %G)
+        const sexoRaw = pickByRegex(o, [/\bsexo\b/, /\bg[êe]nero\b/, /sexo biolog/i]);
+        const sx = String(sexoRaw || '').toLowerCase();
+        const isMale   = /\b(m|masc|masculino|homem|male)\b/.test(sx);
+        const isFemale = /\b(f|fem|feminino|mulher|female)\b/.test(sx);
+        const sexoNorm = isMale ? 'M' : 'F'; // padrão feminino se indefinido
+
+        // RCQ / WHtR
         const rcqCalc   = (Number.isFinite(cinturaN) && Number.isFinite(quadrilN) && quadrilN !== 0) ? (cinturaN / quadrilN) : undefined;
         const whtrCalc  = (Number.isFinite(cinturaN) && Number.isFinite(alturaN)  && alturaN  !== 0) ? (cinturaN / alturaN)  : undefined;
+
+        // % Gordura (Marinha EUA)
+        const bodyfatCalc = navyBodyFat(sexoNorm, cinturaN, quadrilN, pescocoN, alturaN);
 
         // nível default
         const nivelDefault = (() => {
@@ -229,7 +284,7 @@ export const Store = {
         }
 
         // --- Registrar avaliação (com métricas) ---
-        if (dataAval || Number.isFinite(base.pontuacao) || Number.isFinite(pesoN) || Number.isFinite(cinturaN) || Number.isFinite(quadrilN) || Number.isFinite(alturaN) || Number.isFinite(abdomenN)) {
+        if (dataAval || Number.isFinite(base.pontuacao) || Number.isFinite(pesoN) || Number.isFinite(cinturaN) || Number.isFinite(quadrilN) || Number.isFinite(alturaN) || Number.isFinite(abdomenN) || Number.isFinite(pescocoN)) {
           const dataISO = /^\d{4}-\d{2}-\d{2}$/.test(String(dataAval)) ? String(dataAval) : todayISO();
           const sugestaoNivel = nivelPorPontuacao(base.pontuacao);
           const readiness = prontidaoPorPontuacao(base.pontuacao);
@@ -245,8 +300,10 @@ export const Store = {
             quadril: Number.isFinite(quadrilN) ? quadrilN : undefined,
             altura:  Number.isFinite(alturaN)  ? alturaN  : undefined,   // cm
             abdomen: Number.isFinite(abdomenN) ? abdomenN : undefined,   // cm
+            pescoco: Number.isFinite(pescocoN) ? pescocoN : undefined,   // cm
             rcq:     Number.isFinite(rcqCalc)  ? rcqCalc  : undefined,
-            whtr:    Number.isFinite(whtrCalc) ? whtrCalc : undefined
+            whtr:    Number.isFinite(whtrCalc) ? whtrCalc : undefined,
+            bodyfat: Number.isFinite(bodyfatCalc) ? bodyfatCalc : undefined
           });
         }
         return base;
