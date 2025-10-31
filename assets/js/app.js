@@ -12,8 +12,8 @@ import { RelatorioView } from './views/relatorioview.js';
 const SHEETS_API = 'https://script.google.com/macros/s/AKfycbyAafbpJDWr4RF9hdTkzmnLLv1Ge258hk6jlnDo7ng2kk88GoWyJzp63rHZPMDJA-wy/exec';
 
 // Branding (lido pelo RelatorioView via import dinâmico)
-export const BRAND_NAME = 'Márcio Dowglas Personal Trainer';
-export const RELATORIO_LOGO_PNG = './assets/img/logo-mdpersonal.png';
+export const BRAND_NAME = 'Bella Prime';
+export const RELATORIO_LOGO_PNG = './assets/img/logo-relatorio.png';
 
 // Form do Professor (pré-preenchido)
 export const PROFESSOR_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLScvQBCSEVdTspYgelGI0zWbrK21ttO1IUKuf9_j5rO_a2czfA/viewform?usp=header';
@@ -233,10 +233,10 @@ export const Store = {
             peso: Number.isFinite(pesoN) ? pesoN : undefined,
             cintura: Number.isFinite(cinturaN) ? cinturaN : undefined,
             quadril: Number.isFinite(quadrilN) ? quadrilN : undefined,
-            altura: Number.isFinite(alturaN) ? alturaN : undefined,
-            abdome: Number.isFinite(abdomenN) ? abdomenN : undefined,   // <<< PADRONIZADO: 'abdome'
-            rcq: Number.isFinite(rcqCalc) ? rcqCalc : undefined,
-            whtr: Number.isFinite(whtrCalc) ? whtrCalc : undefined
+            altura: Number.isFinite(alturaN) ? alturaN : undefined,      // << NOVO
+            abdomen: Number.isFinite(abdomenN) ? abdomenN : undefined,   // << NOVO
+            rcq: Number.isFinite(rcqCalc) ? rcqCalc : undefined,         // << NOVO
+            whtr: Number.isFinite(whtrCalc) ? whtrCalc : undefined       // << NOVO
           });
         }
         return base;
