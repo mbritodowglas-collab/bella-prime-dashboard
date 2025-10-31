@@ -51,11 +51,17 @@ export const RelatorioView = {
       RELATORIO_LOGO_PNG = mod.RELATORIO_LOGO_PNG || RELATORIO_LOGO_PNG;
     } catch (_) { /* segue com fallbacks */ }
 
-    // números prontos para a tabela de métricas
-    const peso    = nOrDash(ultimaAval.peso, 2);
-    const cintura = nOrDash(ultimaAval.cintura, 0);
-    const quadril = nOrDash(ultimaAval.quadril, 0);
-    const abdome  = nOrDash(ultimaAval.abdome, 0);
+    // ---------- métricas mostradas na tabela (exibição) ----------
+    // mapeamento tolerante para variações de cabeçalho do Sheets
+    const pesoVal    = pick(ultimaAval, ["peso", "Peso (kg)", "peso_kg"]);
+    const cinturaVal = pick(ultimaAval, ["cintura", "Cintura (cm)", "cintura_cm"]);
+    const quadrilVal = pick(ultimaAval, ["quadril", "Quadril (cm)", "quadril_cm"]);
+    const abdomeVal  = pick(ultimaAval, ["abdome", "Abdome (cm)", "Abdome", "abdome_cm"]);
+
+    const peso    = nOrDash(pesoVal, 2);
+    const cintura = nOrDash(cinturaVal, 0);
+    const quadril = nOrDash(quadrilVal, 0);
+    const abdome  = nOrDash(abdomeVal, 0);
     const rcq     = nOrDash(calcRCQ(ultimaAval), 3);
     const rce     = nOrDash(calcRCE(ultimaAval), 3);
 
@@ -312,10 +318,26 @@ export const RelatorioView = {
 };
 
 // ---------- helpers ----------
-function nOrDash(v, d=0){ const n = Number(v); return Number.isFinite(n) ? n.toFixed(d) : '-'; }
-function isNum(v){ const n = Number(v); return Number.isFinite(n); }
+function nOrDash(v, d=0){
+  if (v == null || v === '') return '-';
+  const n = Number(String(v).replace(',', '.'));
+  return Number.isFinite(n) ? n.toFixed(d) : '-';
+}
+function isNum(v){
+  const n = Number(v);
+  return Number.isFinite(n);
+}
+// pega o primeiro campo existente entre múltiplas chaves possíveis
+function pick(obj, keys){
+  for (const k of keys){
+    const val = obj?.[k];
+    if (val != null && String(val).trim() !== '') return val;
+  }
+  return undefined;
+}
 function calcRCQ(a){
-  const c = Number(a?.cintura); const q = Number(a?.quadril);
+  const c = Number(a?.cintura);
+  const q = Number(a?.quadril);
   return (isNum(c) && isNum(q) && q !== 0) ? (c/q) : undefined;
 }
 function calcRCE(a){
