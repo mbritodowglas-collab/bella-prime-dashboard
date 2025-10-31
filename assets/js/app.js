@@ -80,7 +80,12 @@ function collectAnswersFromRaw(raw){
     'cintura','cintura (cm)','cintura cm',
     'quadril','quadril (cm)','quadril cm',
     'altura','estatura','altura (cm)','height',
-    'abdomen','abdomem','perimetro abdominal','circunferencia abdominal',
+    // >>> abdômen (todas as variações comuns para não cair em _answers)
+    'abdome','abdome (cm)','abdome cm',
+    'abdomen','abdomen (cm)','abdomen cm',
+    'abdomem','abdomem (cm)','abdomem cm',
+    'perimetro abdominal','perimetro abdominal (cm)','perimetro abdominal cm',
+    'circunferencia abdominal','circunferencia abdominal (cm)','circunferencia abdominal cm',
     // form do professor
     'novo_nivel','novonivel','nivel_novo','nivel aprovado','nivel_aprovado','nivel_definido',
     'aprovado','aprovacao','aprovação','aprovacao_professor','ok','apto','apta',
@@ -162,7 +167,12 @@ export const Store = {
         const alturaRaw = toNum(pickByRegex(o, [/\baltura\b/, /\bestatura\b/, /\baltura \(cm\)\b/, /\bheight\b/]));
         // altura em cm; se vier em metros (<=3), converte pra cm
         const alturaN   = (typeof alturaRaw === 'number' && alturaRaw <= 3) ? alturaRaw*100 : alturaRaw;
-        const abdomenN  = toNum(pickByRegex(o, [/\babdomen\b/, /\babdomem\b/, /perimetro abdominal/, /circunferencia abdominal/]));
+
+        // >>> Abdômen (todas as formas comuns)
+        const abdomenN  = toNum(pickByRegex(o, [
+          /\babdome\b/, /\babdomen\b/, /\babdomem\b/, /\babdominal\b/,
+          /perimetro abdominal/, /circunferencia abdominal/
+        ]));
 
         const rcqCalc   = (Number.isFinite(cinturaN) && Number.isFinite(quadrilN) && quadrilN !== 0) ? (cinturaN / quadrilN) : undefined;
         const whtrCalc  = (Number.isFinite(cinturaN) && Number.isFinite(alturaN)  && alturaN  !== 0) ? (cinturaN / alturaN)  : undefined;
@@ -230,13 +240,13 @@ export const Store = {
             nivel: base.nivel,
             sugestaoNivel,
             readiness,
-            peso: Number.isFinite(pesoN) ? pesoN : undefined,
+            peso:    Number.isFinite(pesoN)    ? pesoN    : undefined,
             cintura: Number.isFinite(cinturaN) ? cinturaN : undefined,
             quadril: Number.isFinite(quadrilN) ? quadrilN : undefined,
-            altura: Number.isFinite(alturaN) ? alturaN : undefined,      // << NOVO
-            abdomen: Number.isFinite(abdomenN) ? abdomenN : undefined,   // << NOVO
-            rcq: Number.isFinite(rcqCalc) ? rcqCalc : undefined,         // << NOVO
-            whtr: Number.isFinite(whtrCalc) ? whtrCalc : undefined       // << NOVO
+            altura:  Number.isFinite(alturaN)  ? alturaN  : undefined,   // cm
+            abdomen: Number.isFinite(abdomenN) ? abdomenN : undefined,   // cm
+            rcq:     Number.isFinite(rcqCalc)  ? rcqCalc  : undefined,
+            whtr:    Number.isFinite(whtrCalc) ? whtrCalc : undefined
           });
         }
         return base;
@@ -470,9 +480,9 @@ const BP_MOBILE_CSS = `
 }
 html,body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;font-size:15px;-webkit-tap-highlight-color:transparent;}
 .card{background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.01));border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;box-shadow:var(--shadow);backdrop-filter:saturate(1.1) blur(2px);margin-bottom:14px;}
-.input{width:100%;height:44px;border-radius:12px;padding:0 12px;border:1px solid var(--border);background:#111316;color:var(--text);font-size:.95rem;}
+.input{width:100%;height:44px;border-radius:12px;padding:0 12px;border:1px solid var(--border);background:#111316;color:#e9eaee;font-size:.95rem;}
 .input:focus{outline:none;border-color:#3a3f47;box-shadow:0 0 0 2px rgba(198,40,40,.12);}
-.btn{--h:44px;min-width:44px;height:var(--h);line-height:var(--h);display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:12px;padding:0 14px;font-weight:600;letter-spacing:.2px;border:1px solid var(--border);background:#14161a;color:var(--text);transition:transform .08s ease,filter .12s ease,background .2s ease,border-color .2s ease;cursor:pointer;text-decoration:none;}
+.btn{--h:44px;min-width:44px;height:var(--h);line-height:var(--h);display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:12px;padding:0 14px;font-weight:600;letter-spacing:.2px;border:1px solid var(--border);background:#14161a;color:#e9eaee;transition:transform .08s ease,filter .12s ease,background .2s ease,border-color .2s ease;cursor:pointer;text-decoration:none;}
 .btn:hover{filter:brightness(1.08);} .btn:active{transform:translateY(1px);}
 .btn-primary{background:var(--primary);border-color:var(--primary-2);color:#fff;} .btn-primary:hover{background:var(--primary-2);} .btn-primary:active{background:var(--primary-3);}
 .btn-outline{background:transparent;} .btn-danger{background:#a32622;border-color:#8e1f1b;color:#fff;} .btn-success{background:var(--ok);border-color:#1a7b46;color:#fff;}
