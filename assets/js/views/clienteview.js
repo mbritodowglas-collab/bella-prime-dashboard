@@ -35,8 +35,7 @@ export const ClienteView = {
     const pesoVal    = pick(ultimaAval, ["peso", "Peso (kg)", "peso_kg"]);
     const cinturaVal = pick(ultimaAval, ["cintura", "Cintura (cm)", "cintura_cm"]);
     const quadrilVal = pick(ultimaAval, ["quadril", "Quadril (cm)", "quadril_cm"]);
-
-    // ✅ AJUSTE: ler direto do campo salvo na avaliação (a.abdomen)
+    // ✅ ler direto do campo salvo na avaliação
     const abdomeVal  = ultimaAval?.abdomen;
 
     const pesoFmt    = nOrDash(pesoVal, 2);
@@ -109,7 +108,28 @@ export const ClienteView = {
       ? `<a class="btn btn-primary" href="${linkProfessor}" target="_blank" rel="noopener">📋 Formulário do Professor</a>`
       : `<button class="btn btn-outline" id="professorFormBtn" title="Defina PROFESSOR_FORM_URL no app.js">📋 Formulário do Professor</button>`;
 
+    // --- botão mensagens rápidas + modal ---
+    const modalCSS = `
+      <style>
+        .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:9998}
+        .modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:9999}
+        .modal.show,.modal-backdrop.show{display:flex}
+        .modal-card{width:min(860px,92vw);max-height:86vh;overflow:auto;background:#121316;border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);padding:14px}
+        .modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+        .modal-grid{display:grid;grid-template-columns:1fr;gap:10px}
+        .msg-item{border:1px solid var(--border);border-radius:12px;padding:10px;background:rgba(255,255,255,.02)}
+        .msg-actions{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+        .msg-title{font-weight:700;margin:0 0 6px}
+        .msg-text{white-space:pre-wrap}
+        @media(min-width:760px){ .modal-grid{grid-template-columns:1fr 1fr} }
+      </style>
+    `;
+
+    const quickBtn = `<button class="btn btn-outline" id="quickMsgBtn">💬 Mensagens rápidas</button>`;
+
     return `
+      ${modalCSS}
+
       <section class="card">
         <a href="#/" class="btn btn-outline" style="margin-bottom:10px;">← Voltar</a>
         <h2>${escapeHTML(c.nome || '')}</h2>
@@ -126,6 +146,7 @@ export const ClienteView = {
         <div class="row" style="gap:10px;margin-top:12px">
           ${ctaProfessor}
           <a class="btn btn-outline" href="#/relatorio/${c.id}">🧾 Relatório (A4)</a>
+          ${quickBtn}
         </div>
       </section>
 
@@ -192,12 +213,62 @@ export const ClienteView = {
       <section class="card chart-card">
         <div class="row" style="justify-content:space-between;align-items:flex-end;">
           <h3 style="margin:0">RCE (cintura/estatura)</h3>
-        <small style="opacity:.85">regra de bolso: manter &lt; 0,50</small>
+          <small style="opacity:.85">regra de bolso: manter &lt; 0,50</small>
         </div>
         <div id="rceEmpty" style="display:none;color:#aaa">Sem dados de cintura/estatura suficientes.</div>
         <canvas id="chartRCE" height="160"></canvas>
         <small style="opacity:.75">Linha guia 0,50 = cintura menor que metade da altura.</small>
       </section>
+
+      <!-- Modal de Mensagens Rápidas -->
+      <div class="modal-backdrop" id="msgBackdrop"></div>
+      <div class="modal" id="msgModal" aria-hidden="true">
+        <div class="modal-card">
+          <div class="modal-header">
+            <h3 style="margin:0">💬 Mensagens rápidas</h3>
+            <button class="btn btn-outline" id="msgCloseBtn">Fechar</button>
+          </div>
+          <div class="modal-grid">
+
+            <div class="msg-item">
+              <h4 class="msg-title">1) IG — Boas-vindas + Avaliação + Blog</h4>
+              <div class="msg-text" id="msg1"></div>
+              <div class="msg-actions">
+                <button class="btn btn-outline" data-copy="#msg1">Copiar</button>
+                <button class="btn btn-primary" data-wa="#msg1">Abrir no WhatsApp</button>
+              </div>
+            </div>
+
+            <div class="msg-item">
+              <h4 class="msg-title">2) IG — Boas-vindas + eBook Bella Prime</h4>
+              <div class="msg-text" id="msg2"></div>
+              <div class="msg-actions">
+                <button class="btn btn-outline" data-copy="#msg2">Copiar</button>
+                <button class="btn btn-primary" data-wa="#msg2">Abrir no WhatsApp</button>
+              </div>
+            </div>
+
+            <div class="msg-item">
+              <h4 class="msg-title">3) Pós-formulário — Solicitar 3 fotos</h4>
+              <div class="msg-text" id="msg3"></div>
+              <div class="msg-actions">
+                <button class="btn btn-outline" data-copy="#msg3">Copiar</button>
+                <button class="btn btn-primary" data-wa="#msg3">Abrir no WhatsApp</button>
+              </div>
+            </div>
+
+            <div class="msg-item">
+              <h4 class="msg-title">4) Follow-up — Relembrar envio das fotos</h4>
+              <div class="msg-text" id="msg4"></div>
+              <div class="msg-actions">
+                <button class="btn btn-outline" data-copy="#msg4">Copiar</button>
+                <button class="btn btn-primary" data-wa="#msg4">Abrir no WhatsApp</button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
     `;
   },
 
@@ -224,6 +295,110 @@ export const ClienteView = {
         alert('Defina PROFESSOR_FORM_URL no app.js para abrir o Formulário do Professor com ID/nome.');
       });
     }
+
+    // ---------- Mensagens rápidas ----------
+    const modal = document.getElementById('msgModal');
+    const backdrop = document.getElementById('msgBackdrop');
+    const openBtn = document.getElementById('quickMsgBtn');
+    const closeBtn= document.getElementById('msgCloseBtn');
+
+    const openModal = ()=>{ modal.classList.add('show'); backdrop.classList.add('show'); };
+    const closeModal= ()=>{ modal.classList.remove('show'); backdrop.classList.remove('show'); };
+
+    openBtn?.addEventListener('click', openModal);
+    closeBtn?.addEventListener('click', closeModal);
+    backdrop?.addEventListener('click', closeModal);
+
+    // Modelos (com foco: treino feminino, emagrecimento e neurociência de hábitos)
+    const nome = c?.nome ? c.nome.split(' ')[0] : '';
+    const blogHint  = '🔗 [seu-link-do-blog-aqui]';
+    const ebookHint = '📘 [link-do-eBook-Bella-Prime]';
+    const avaliacaoCTA = 'Posso te enviar o link da avaliação gratuita?';
+
+    const M1 = [
+      `Oi! 👋 Seja muito bem-vinda!`,
+      `Aqui eu falo de *treino feminino*, *emagrecimento real* e *neurociência aplicada à mudança de hábitos*.`,
+      ``,
+      `Se quiser, te mando o link da **avaliação gratuita** que uso pra montar um diagnóstico personalizado.`,
+      `É rapidinho e já mostra por onde começar pra ter resultado de verdade. 💪✨`,
+      ``,
+      `Enquanto isso, passa no blog — toda semana tem dicas práticas:`,
+      `${blogHint}`,
+      ``,
+      `${avaliacaoCTA}`
+    ].join('\n');
+
+    const M2 = [
+      `Oi, tudo bem? 👋`,
+      `Vi que você começou a me seguir — bem-vinda! 🌹`,
+      `Preparei um **eBook gratuito** apresentando o **Tratamento Bella Prime™**: níveis de evolução, método e como ele integra *treino + mente + hábitos*.`,
+      ``,
+      `Quer o link pra baixar?`,
+      `${ebookHint}`
+    ].join('\n');
+
+    const M3 = [
+      `Oi${nome?`, ${nome}`:''}! 👋`,
+      `Recebi seu formulário e já posso começar teu diagnóstico.`,
+      `Pra eu montar com precisão, me envie **3 fotos corporais**: *frente, costas e de lado*.`,
+      ``,
+      `👉 Do pescoço pra baixo, roupas de treino (top + short/legging preta), em pé, com boa iluminação.`,
+      `Assim analiso postura, pontos de retenção e defino o plano com mais assertividade. 💪✨`
+    ].join('\n');
+
+    const M4 = [
+      `Oi${nome?`, ${nome}`:''}! Tudo bem? 😊`,
+      `Vi que você preencheu o formulário, mas ainda não finalizamos o envio das fotos.`,
+      `Sem elas eu não consigo concluir teu diagnóstico nem ajustar treino e hábitos com precisão.`,
+      ``,
+      `Se preferir, te mando um exemplo de como fazer — é simples e rapidinho.`,
+      `Quer que eu te envie o modelo pra facilitar? 📸`
+    ].join('\n');
+
+    // injeta textos
+    const setText = (sel, txt) => { const el = document.getElementById(sel); if (el) el.textContent = txt; };
+    setText('msg1', M1);
+    setText('msg2', M2);
+    setText('msg3', M3);
+    setText('msg4', M4);
+
+    // ações de copiar e abrir no WhatsApp
+    const handleCopy = (selector) => {
+      const el = document.querySelector(selector);
+      if (!el) return;
+      const ta = document.createElement('textarea');
+      ta.value = el.textContent || '';
+      ta.setAttribute('readonly','');
+      ta.style.position='fixed'; ta.style.left='-9999px';
+      document.body.appendChild(ta);
+      ta.select(); ta.setSelectionRange(0, ta.value.length);
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    };
+    const onlyDigits = s => String(s||'').replace(/\D+/g,'');
+    const waOpen = (selector) => {
+      const msg = (document.querySelector(selector)?.textContent||'').trim();
+      if (!msg) return;
+      const phone = onlyDigits(c?.contato);
+      const url = phone ? `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`
+                        : `https://wa.me/?text=${encodeURIComponent(msg)}`;
+      window.open(url, '_blank', 'noopener');
+    };
+
+    document.querySelectorAll('[data-copy]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const sel = btn.getAttribute('data-copy');
+        handleCopy(sel);
+        btn.textContent = 'Copiado!';
+        setTimeout(()=> btn.textContent = 'Copiar', 1200);
+      });
+    });
+    document.querySelectorAll('[data-wa]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const sel = btn.getAttribute('data-wa');
+        waOpen(sel);
+      });
+    });
 
     // Excluir treino
     document.querySelectorAll('.btn-del-treino').forEach(btn => {
