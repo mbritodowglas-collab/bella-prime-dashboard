@@ -12,8 +12,8 @@ import { RelatorioView } from './views/relatorioview.js';
 const SHEETS_API = 'https://script.google.com/macros/s/AKfycbyAafbpJDWr4RF9hdTkzmnLLv1Ge258hk6jlnDo7ng2kk88GoWyJzp63rHZPMDJA-wy/exec';
 
 // Branding (lido pelo RelatorioView via import dinâmico)
-export const BRAND_NAME = 'Bella Prime';
-export const RELATORIO_LOGO_PNG = './assets/img/logo-relatorio.png';
+export const BRAND_NAME = 'Marcio Dowglas Personal Trainer';
+export const RELATORIO_LOGO_PNG = './assets/img/logo-mdpersonal.png';
 
 // Form do Professor (pré-preenchido)
 export const PROFESSOR_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLScvQBCSEVdTspYgelGI0zWbrK21ttO1IUKuf9_j5rO_a2czfA/viewform?usp=header';
