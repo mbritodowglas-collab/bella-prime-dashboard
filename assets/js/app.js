@@ -8,7 +8,6 @@ import { AvaliacaoView } from './views/avaliacaoview.js';
 import { TreinoView }    from './views/treinoview.js'; // <<< NOVO
 import { RelatorioView } from './views/relatorioview.js';
 
-
 // ---------- Config gerais ----------
 const SHEETS_API = 'https://script.google.com/macros/s/AKfycbyAafbpJDWr4RF9hdTkzmnLLv1Ge258hk6jlnDo7ng2kk88GoWyJzp63rHZPMDJA-wy/exec';
 
@@ -296,6 +295,36 @@ export const Store = {
     const i = this.state.clientes.findIndex(x => String(x.id) === String(c.id));
     if (i >= 0) this.state.clientes[i] = c; else this.state.clientes.push(c);
     this.persist();
+  },
+
+  // ------- Suporte a Export/Import usados no Dashboard -------
+  exportJSON(){
+    try{
+      const blob = new Blob([JSON.stringify(this.state.clientes, null, 2)], {type:'application/json'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `bella-prime-clientes-${todayISO()}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+    }catch(e){
+      console.error('exportJSON()', e);
+      alert('Falha ao exportar JSON.');
+    }
+  },
+
+  async importJSON(file){
+    try{
+      const txt = await file.text();
+      const arr = JSON.parse(txt);
+      if (!Array.isArray(arr)) throw new Error('Formato inválido (esperado array de clientes).');
+      this.state.clientes = arr;
+      this.persist();
+    }catch(e){
+      console.error('importJSON()', e);
+      alert('Falha ao importar JSON: ' + e.message);
+    }
   }
 };
 
@@ -393,10 +422,11 @@ function contarProntasSeguidas(avals){
 // ---------- Router ----------
 const idRe = '([\\w\\-+.@=]+)';
 const routes = [
-  { path: new RegExp('^#\\/$'),                         view: DashboardView },
-  { path: new RegExp('^#\\/cliente\\/' + idRe + '$'),   view: ClienteView   },
-  { path: new RegExp('^#\\/avaliacao\\/' + idRe + '$'), view: AvaliacaoView },
+  { path: new RegExp('^#\\/$'),                           view: DashboardView },
+  { path: new RegExp('^#\\/cliente\\/' + idRe + '$'),     view: ClienteView   },
+  { path: new RegExp('^#\\/avaliacao\\/' + idRe + '$'),   view: AvaliacaoView },
   { path: new RegExp('^#\\/treino\\/' + idRe + '\\/novo$'), view: TreinoView }, // <<< NOVO
+  { path: new RegExp('^#\\/relatorio\\/' + idRe + '$'),   view: RelatorioView }, // <<< NOVO (Relatório)
 ];
 
 async function render(){
