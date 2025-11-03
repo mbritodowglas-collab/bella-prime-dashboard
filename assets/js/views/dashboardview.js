@@ -27,7 +27,7 @@ const PARAMS = {
     intensidade1RM: '65–75%',
     cadencia: '2:1–2:2',
     metodos: 'pirâmide, bi-set leve, drop simples, isometria (conforme meso)',
-    intensidades: ['≈65–75% (estável; sem periodização)'], // fixa (atende seu pedido)
+    intensidades: ['≈65–75% (estável; sem periodização)'], // fixa
     cardio: [
       { tipo: 'LISS', duracao_min: 30, FCR: '60–65%', instrucao: 'Ritmo contínuo.' },
       { tipo: 'MISS', duracao_min: 20, FCR: '65–75%', instrucao: 'Ritmo sustentado.' }
@@ -172,6 +172,54 @@ function buildUniversalTemplate() {
   ].join('\n');
 }
 
+// Gera a lista bruta de prompts (para depois filtrar no modal)
+function buildAllPromptRecords(){
+  const records = [];
+
+  // Universal (opcional)
+  records.push({
+    key: 'universal',
+    level: '—',
+    program: '—',
+    intensity: '—',
+    title: 'Template Universal',
+    text: buildUniversalTemplate()
+  });
+
+  for (const level of ['Fundação','Ascensão','Domínio','OverPrime']){
+    const programs = PROGRAMS_BY_LEVEL[level] || [];
+    const periodized = PERIODIZED_LEVELS.has(level);
+    const intens = PARAMS[level]?.intensidades || [];
+
+    if (!periodized) {
+      // intensidade fixa -> um card por programa
+      for (const program of programs){
+        records.push({
+          key: `${level}_${program}`,
+          level, program,
+          intensity: intens[0] || PARAMS[level].intensidade1RM,
+          title: `${level} — ${program}`,
+          text: buildPromptTemplate({ level, program, intensityLabel: intens[0] || PARAMS[level].intensidade1RM })
+        });
+      }
+    } else {
+      // periodizado -> um card por intensidade para cada programa
+      for (const program of programs){
+        for (const intensity of intens){
+          records.push({
+            key: `${level}_${program}_${intensity}`.replace(/\s+/g,'_'),
+            level, program, intensity,
+            title: `${level} — ${program} — ${intensity}`,
+            text: buildPromptTemplate({ level, program, intensityLabel: intensity })
+          });
+        }
+      }
+    }
+  }
+
+  return records;
+}
+
 // ---------------- /PARAMS ----------------
 
 export const DashboardView = {
@@ -194,6 +242,7 @@ export const DashboardView = {
         .msg-text,.prompt-text{white-space:pre-wrap}
         .pill{display:inline-block;padding:3px 8px;border-radius:999px;border:1px solid var(--border);font-size:.8rem;opacity:.9;margin-right:6px}
         .muted{opacity:.85}
+        .filters{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 12px}
         @media(min-width:960px){ .modal-grid{grid-template-columns:1fr 1fr} }
       </style>
     `;
@@ -278,6 +327,25 @@ export const DashboardView = {
             <h3 style="margin:0">🧠 Prompts de Elaboração de Treino</h3>
             <button class="btn btn-outline" id="promptCloseBtn">Fechar</button>
           </div>
+
+          <!-- Filtros -->
+          <div class="filters">
+            <select id="fNivel" class="input" style="min-width:160px">
+              <option value="">Todos os níveis</option>
+              <option>Fundação</option>
+              <option>Ascensão</option>
+              <option>Domínio</option>
+              <option>OverPrime</option>
+            </select>
+            <select id="fProg" class="input" style="min-width:140px">
+              <option value="">Todos os programas</option>
+              <option>ABC</option>
+              <option>ABCD</option>
+              <option>ABCDE</option>
+              <option>ABCDEF</option>
+            </select>
+          </div>
+
           <p class="muted" style="margin:0 0 8px">
             Templates com placeholders (ex.: {{CLIENTE_NOME}}, {{DATA_INICIO}}, {{DATA_VENCIMENTO}}).
           </p>
@@ -414,49 +482,44 @@ export const DashboardView = {
       });
     });
 
-    // ===== Modal de Prompts de Treino =====
+    // ===== Modal de Prompts de Treino + FILTRO =====
     const pModal = $('#promptModal'); const pBack = $('#promptBackdrop');
     const pOpen = $('#openPromptBtn'); const pClose = $('#promptCloseBtn');
+
     pOpen.addEventListener('click',()=>{ pModal.classList.add('show'); pBack.classList.add('show'); });
     pClose.addEventListener('click',()=>{ pModal.classList.remove('show'); pBack.classList.remove('show'); });
     pBack.addEventListener('click',()=>{ pModal.classList.remove('show'); pBack.classList.remove('show'); });
 
-    // Monta todos os cards (Fundação/Ascensão = intens. fixa; Domínio/OverPrime = um por intensidade)
     const grid = document.getElementById('promptGrid');
-    if (grid){
-      const allCards = [];
+    const fNivel = document.getElementById('fNivel');
+    const fProg  = document.getElementById('fProg');
 
-      // Universal (opcional)
-      allCards.push(promptCardHTML('universal', 'Template Universal', buildUniversalTemplate(), ['Geral']));
+    // pré-monta todos os prompts uma única vez
+    const PROMPT_RECORDS = buildAllPromptRecords();
 
-      // Por nível
-      for (const level of ['Fundação','Ascensão','Domínio','OverPrime']){
-        const programs = PROGRAMS_BY_LEVEL[level] || [];
-        const periodized = PERIODIZED_LEVELS.has(level);
-        const intens = PARAMS[level]?.intensidades || [];
+    function renderPromptGrid(){
+      const nivel = (fNivel?.value || '').trim();
+      const prog  = (fProg?.value  || '').trim();
 
-        if (!periodized) {
-          // intensidade fixa -> um card por programa
-          for (const program of programs){
-            const text = buildPromptTemplate({ level, program, intensityLabel: intens[0] || PARAMS[level].intensidade1RM });
-            allCards.push(promptCardHTML(`${level}_${program}`, `${level} — ${program}`, text, [level, program]));
-          }
-        } else {
-          // periodizado -> um card por intensidade para cada programa
-          for (const program of programs){
-            for (const intensity of intens){
-              const text = buildPromptTemplate({ level, program, intensityLabel: intensity });
-              const title = `${level} — ${program} — ${intensity}`;
-              const key = `${level}_${program}_${intensity}`.replace(/\s+/g,'_');
-              allCards.push(promptCardHTML(key, title, text, [level, program]));
-            }
-          }
+      const filtered = PROMPT_RECORDS.filter(r => {
+        const okNivel = !nivel || r.level === nivel || r.level === '—';
+        const okProg  = !prog  || r.program === prog || r.program === '—';
+        // respeita a regra de existência: ABCDE só aparece em Domínio/OverPrime; ABCDEF só em OverPrime
+        if (prog && r.program === prog && r.level !== '—') {
+          const allowed = PROGRAMS_BY_LEVEL[r.level] || [];
+          if (!allowed.includes(prog)) return false;
         }
-      }
+        return okNivel && okProg;
+      });
 
-      grid.innerHTML = allCards.join('');
+      grid.innerHTML = filtered.map(r => {
+        const pills = [];
+        if (r.level !== '—') pills.push(r.level);
+        if (r.program !== '—') pills.push(r.program);
+        if (r.intensity && r.intensity !== '—') pills.push(r.intensity);
+        return promptCardHTML(r.key, r.title, r.text, pills);
+      }).join('');
 
-      // copiar prompt
       grid.querySelectorAll('[data-copy-prompt]').forEach(btn=>{
         btn.addEventListener('click',()=>{
           const target = grid.querySelector(btn.dataset.copyPrompt);
@@ -466,6 +529,12 @@ export const DashboardView = {
         });
       });
     }
+
+    fNivel?.addEventListener('change', renderPromptGrid);
+    fProg?.addEventListener('change', renderPromptGrid);
+
+    // primeira renderização do modal de prompts
+    renderPromptGrid();
   }
 };
 
