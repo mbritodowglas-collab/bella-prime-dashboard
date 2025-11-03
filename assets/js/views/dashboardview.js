@@ -5,6 +5,154 @@ import { Store, statusCalc } from '../app.js';
 
 let chartRef = null; // barras (níveis)
 
+// ---------------- PARAMS (espelhados do TreinoView) ----------------
+const PARAMS = {
+  'Fundação': {
+    series: '3',
+    reps: '12–15',
+    descanso: '45–75s',
+    intensidade1RM: '50–65%',
+    cadencia: '2:1–2:2',
+    metodos: 'pirâmide truncada (±5%), circuito leve, isometria leve (2s)',
+    cardio: [
+      { tipo: 'LISS', duracao_min: 25, FCR: '60–65%', instrucao: 'Ritmo contínuo, conversa possível.' },
+      { tipo: 'MISS (opcional)', duracao_min: 15, FCR: '65–70%', instrucao: 'Ritmo sustentado, fala entrecortada.' }
+    ]
+  },
+  'Ascensão': {
+    series: '3',
+    reps: '10–14 (ajuste progressivo)',
+    descanso: '60–90s',
+    intensidade1RM: '65–75% (conforme mesociclo)',
+    cadencia: '2:1–2:2',
+    metodos: 'pirâmide, bi-set leve, drop simples, isometria (conforme meso)',
+    cardio: [
+      { tipo: 'LISS', duracao_min: 30, FCR: '60–65%', instrucao: 'Ritmo contínuo.' },
+      { tipo: 'MISS', duracao_min: 20, FCR: '65–75%', instrucao: 'Ritmo sustentado.' }
+    ]
+  },
+  'Domínio': {
+    series: '4–5',
+    reps: '8–12 (conforme foco)',
+    descanso: '60–120s',
+    intensidade1RM: '70–85% (por mesociclo)',
+    cadencia: '2:1–2:2 / 3:1 em tensional',
+    metodos: 'pirâmide crescente, bi-set/supersérie, drop, rest-pause, isometria (conforme meso)',
+    cardio: [
+      { tipo: 'MISS', duracao_min: 20, FCR: '65–75%', instrucao: 'Ritmo sustentado.' }
+    ],
+    extra: [
+      'Distribuição temporal (respeite a sequência de intensidades selecionadas):',
+      '- Quebre o período em blocos semanais coerentes (ex.: 4–5 semanas por foco).',
+      '- Indique no topo de cada sessão a qual foco/mesociclo aquela semana pertence.'
+    ]
+  },
+  'OverPrime': {
+    series: '4–6',
+    reps: '6–12 (conforme foco)',
+    descanso: '60–150s',
+    intensidade1RM: '75–90% (por mesociclo)',
+    cadencia: 'variável (inclui cluster/pausas)',
+    metodos: 'pirâmide inversa, rest-pause duplo, cluster, tri/giant set, parciais (conforme meso)',
+    cardio: [
+      { tipo: 'MISS', duracao_min: 20, FCR: '70–80%', instrucao: 'Ritmo desafiador.' }
+    ],
+    extra: [
+      'Distribuição temporal (respeite a sequência de intensidades selecionadas):',
+      '- Quebre o período em blocos semanais coerentes (ex.: 4–5 semanas por foco).',
+      '- Indique no topo de cada sessão a qual foco/mesociclo aquela semana pertence.'
+    ]
+  }
+};
+
+// gera blocos de cardio formatados (igual ao TreinoView)
+function cardioLines(level) {
+  const arr = PARAMS[level]?.cardio || [];
+  if (!arr.length) return '';
+  return arr.map(c => `• ${c.tipo} — ${c.duracao_min}min · ${c.FCR} · ${c.instrucao}`).join('\n');
+}
+
+// template de prompt por nível (com placeholders)
+function buildPromptTemplate(level) {
+  const p = PARAMS[level] || PARAMS['Fundação'];
+  const base = [
+    'Você é prescritor do sistema Bella Prime · Evo360.',
+    'Gere um PROGRAMA DE TREINO estruturado seguindo as regras do nível.',
+    '',
+    `Cliente: {{CLIENTE_NOME}} | Nível: ${level || '{{NIVEL}}'}`,
+    `Programa: {{PROGRAMA}}`,
+    `Período: {{DATA_INICIO}} → {{DATA_VENCIMENTO}}`,
+    `{{INTENSIDADES}}`, // opcional
+    `{{OBJETIVO}}`,     // opcional
+    `{{RESTRICOES}}`,   // opcional
+    `{{OBSERVACOES}}`,  // opcional
+    '',
+    'Parâmetros do nível:',
+    `- Séries: ${p.series}`,
+    `- Repetições: ${p.reps}`,
+    `- Descanso: ${p.descanso}`,
+    `- %1RM: ${p.intensidade1RM}`,
+    `- Cadência: ${p.cadencia}`,
+    `- Métodos aplicáveis: ${p.metodos}`,
+    '',
+    'Estrutura obrigatória por sessão:',
+    '- Mobilidade (3 itens do grupo do dia).',
+    '- Principais (6–8 exercícios, ordem sugerida: 1 multiarticular principal, 2 secundário, 3 acessório composto, 4 isolador primário, 5 isolador secundário, 6 método aplicado, 7 core técnico opcional).',
+    '',
+    'Cardio (Karvonen — FCR = (FCmax − FCrep) × %intensidade + FCrep). Modelos:',
+    cardioLines(level),
+    '',
+    'Formato de saída:',
+    '- Sessões A, B, C... com listas de exercícios e parâmetros (séries, reps, descanso, cadência).',
+    '- Cardio no final conforme FCR, indicando tipo, duração, %FCR e instrução prática.',
+    '- Incluir observações do método quando aplicável (NUNCA explicar o gesto motor).'
+  ];
+
+  if (p.extra && Array.isArray(p.extra)) base.push('', ...p.extra);
+  return base.filter(Boolean).join('\n');
+}
+
+// versão “universal” (sem parametrizar nível — para qualquer caso)
+function buildPromptUniversal() {
+  const base = [
+    'Você é prescritor do sistema Bella Prime · Evo360.',
+    'Gere um PROGRAMA DE TREINO estruturado.',
+    '',
+    'Cliente: {{CLIENTE_NOME}} | Nível: {{NIVEL}}',
+    'Programa: {{PROGRAMA}}',
+    'Período: {{DATA_INICIO}} → {{DATA_VENCIMENTO}}',
+    '{{INTENSIDADES}}',
+    '{{OBJETIVO}}',
+    '{{RESTRICOES}}',
+    '{{OBSERVACOES}}',
+    '',
+    'Parâmetros do nível (preencha conforme o nível informado):',
+    '- Séries: {{SERIES}}',
+    '- Repetições: {{REPETICOES}}',
+    '- Descanso: {{DESCANSO}}',
+    '- %1RM: {{PERCENT_1RM}}',
+    '- Cadência: {{CADENCIA}}',
+    '- Métodos aplicáveis: {{METODOS}}',
+    '',
+    'Estrutura obrigatória por sessão:',
+    '- Mobilidade (3 itens do grupo do dia).',
+    '- Principais (6–8 exercícios; ordem: 1 multiarticular principal; 2 secundário; 3 acessório composto; 4 isolador primário; 5 isolador secundário; 6 método; 7 core técnico opcional).',
+    '',
+    'Cardio (Karvonen):',
+    '- Tipo: {{CARDIO_TIPO}} · Duração: {{CARDIO_MIN}}min · FCR: {{CARDIO_FCR}} · Instrução: {{CARDIO_NOTAS}}',
+    '',
+    'Formato de saída:',
+    '- Sessões A, B, C... (parâmetros completos).',
+    '- Cardio ao final (tipo, duração, %FCR e instrução prática).',
+    '- Observações do método quando aplicável (não explicar gesto motor).',
+    '',
+    'Se o nível for Domínio/OverPrime, considere blocos semanais e a sequência de intensidades.'
+  ];
+  return base.join('\n');
+}
+
+// ---------------- /PARAMS ----------------
+
 export const DashboardView = {
   async template(){
     const k = kpi(Store.state.clientes);
@@ -55,11 +203,9 @@ export const DashboardView = {
         <input type="file" id="file" style="display:none" accept="application/json" />
         <button class="btn btn-primary" id="exportBtn">Exportar JSON</button>
 
-        <!-- Exportações rápidas -->
         <button class="btn btn-outline" id="copyCsvBtn" title="Gerar CSV e copiar">Copiar CSV</button>
         <button class="btn btn-outline" id="copyJsonLinesBtn" title="Gerar JSON Lines e copiar">Copiar JSONL</button>
 
-        <!-- Acesso rápido -->
         <button class="btn btn-outline" id="openMsgBtn">💬 Mensagens rápidas</button>
         <button class="btn btn-outline" id="openPromptBtn">🧠 Prompts de Treino</button>
       </section>
@@ -102,7 +248,7 @@ export const DashboardView = {
         </div>
       </div>
 
-      <!-- Modal de Prompts de Treino (carregado do TreinoView) -->
+      <!-- Modal de Prompts de Treino -->
       <div class="modal-backdrop" id="promptBackdrop"></div>
       <div class="modal" id="promptModal">
         <div class="modal-card">
@@ -111,10 +257,10 @@ export const DashboardView = {
             <button class="btn btn-outline" id="promptCloseBtn">Fechar</button>
           </div>
           <p class="muted" style="margin:0 0 8px">
-            *Estes são os mesmos prompts definidos no <code>treinoview.js</code>, apenas acessíveis aqui no Dashboard.*
+            *Templates com placeholders. Preencha depois de colar (ex.: {{CLIENTE_NOME}}, {{PROGRAMA}}, {{DATA_INICIO}}...).*
           </p>
           <div class="modal-grid" id="promptGrid">
-            <!-- preenchido em runtime a partir do TreinoView -->
+            <!-- preenchido em runtime -->
           </div>
         </div>
       </div>
@@ -213,20 +359,11 @@ export const DashboardView = {
     const modal = $('#msgModal'); const back = $('#msgBackdrop');
     const openBtn = $('#openMsgBtn'); const closeBtn = $('#msgCloseBtn');
 
-    openBtn.addEventListener('click',()=>{
-      modal.classList.add('show');
-      back.classList.add('show');
-    });
-    closeBtn.addEventListener('click',()=>{
-      modal.classList.remove('show');
-      back.classList.remove('show');
-    });
-    back.addEventListener('click',()=>{
-      modal.classList.remove('show');
-      back.classList.remove('show');
-    });
+    openBtn.addEventListener('click',()=>{ modal.classList.add('show'); back.classList.add('show'); });
+    closeBtn.addEventListener('click',()=>{ modal.classList.remove('show'); back.classList.remove('show'); });
+    back.addEventListener('click',()=>{ modal.classList.remove('show'); back.classList.remove('show'); });
 
-    // Mensagens rápidas (links fixos que você pediu)
+    // Mensagens rápidas com seus links
     const BLOG = 'https://mbritodowglas-collab.github.io/mdpersonal/';
     const AVAL = 'https://mbritodowglas-collab.github.io/mdpersonal/avaliacao';
 
@@ -264,51 +401,31 @@ export const DashboardView = {
     const pModal = $('#promptModal'); const pBack = $('#promptBackdrop');
     const pOpen = $('#openPromptBtn'); const pClose = $('#promptCloseBtn');
 
-    pOpen.addEventListener('click',()=>{
-      pModal.classList.add('show');
-      pBack.classList.add('show');
-    });
-    pClose.addEventListener('click',()=>{
-      pModal.classList.remove('show');
-      pBack.classList.remove('show');
-    });
-    pBack.addEventListener('click',()=>{
-      pModal.classList.remove('show');
-      pBack.classList.remove('show');
-    });
+    pOpen.addEventListener('click',()=>{ pModal.classList.add('show'); pBack.classList.add('show'); });
+    pClose.addEventListener('click',()=>{ pModal.classList.remove('show'); pBack.classList.remove('show'); });
+    pBack.addEventListener('click',()=>{ pModal.classList.remove('show'); pBack.classList.remove('show'); });
 
-    // Carrega os prompts do TreinoView (dinâmico, sem travar o bundle)
-    try{
-      // caminho relativo porque este arquivo está em views/
-      const mod = await import('./treinoview.js');
-      const data = mod?.PROMPTS || (typeof mod?.getPrompts === 'function' ? mod.getPrompts() : null);
-      const grid = document.getElementById('promptGrid');
+    // Monta cards com os templates de prompt (Fundação / Ascensão / Domínio / OverPrime + Universal)
+    const grid = document.getElementById('promptGrid');
+    if (grid){
+      const items = [
+        ['universal', 'Template Universal', buildPromptUniversal()],
+        ['fundacao',  'Fundação',          buildPromptTemplate('Fundação')],
+        ['ascensao',  'Ascensão',          buildPromptTemplate('Ascensão')],
+        ['dominio',   'Domínio',           buildPromptTemplate('Domínio')],
+        ['overprime', 'OverPrime',         buildPromptTemplate('OverPrime')],
+      ];
+      grid.innerHTML = items.map(([key, title, txt]) => promptCardHTML(key, title, txt)).join('');
 
-      if (grid && data && typeof data === 'object' && Object.keys(data).length){
-        grid.innerHTML = renderPromptCards(data); // monta os cards a partir do objeto existente
-        // listeners dos botões "Copiar prompt"
-        grid.querySelectorAll('[data-copy-prompt]').forEach(btn=>{
-          btn.addEventListener('click',()=>{
-            const target = grid.querySelector(btn.dataset.copyPrompt);
-            if (!target) return;
-            copyToClipboard(target.textContent);
-            toast('Prompt copiado!');
-          });
+      // copiar prompt
+      grid.querySelectorAll('[data-copy-prompt]').forEach(btn=>{
+        btn.addEventListener('click',()=>{
+          const target = grid.querySelector(btn.dataset.copyPrompt);
+          if (!target) return;
+          copyToClipboard(target.textContent);
+          toast('Prompt copiado!');
         });
-      } else if (grid) {
-        grid.innerHTML = `<div class="prompt-item"><div class="prompt-text">
-          Não encontrei os prompts exportados pelo <code>treinoview.js</code>.
-          Exporte-os como <code>export const PROMPTS = { ... }</code> ou <code>export function getPrompts(){...}</code>.
-        </div></div>`;
-      }
-    } catch(err){
-      console.warn('Falha ao importar prompts do TreinoView:', err);
-      const grid = document.getElementById('promptGrid');
-      if (grid){
-        grid.innerHTML = `<div class="prompt-item"><div class="prompt-text">
-          Não consegui carregar o <code>treinoview.js</code>. Verifique o caminho relativo (<code>./treinoview.js</code>) e se há export de <code>PROMPTS</code> ou <code>getPrompts()</code>.
-        </div></div>`;
-      }
+      });
     }
   }
 };
@@ -388,7 +505,6 @@ function safeCell(v){
   return String(v).replace(/\r?\n/g,' ').replace(/"/g,'""');
 }
 
-// Normalização (mantida p/ CSV/JSONL)
 function pick(obj, keys){
   for (const k of keys){
     const val = obj?.[k];
@@ -464,19 +580,6 @@ function formatJSONLinesWithMetrics(arr){
   }).join('\n');
 }
 
-// versões legadas (mantidas)
-function formatCSV(arr){
-  if(!Array.isArray(arr)) return '';
-  const fields = ['id','nome','contato','email','cidade','nivel','pontuacao','ultimoTreino','objetivo'];
-  const header = fields.join(',');
-  const rows = arr.map(o => fields.map(f => `"${safeCell(o[f])}"`).join(','));
-  return [header, ...rows].join('\n');
-}
-function formatJSONLines(arr){
-  if(!Array.isArray(arr)) return '';
-  return arr.map(o => JSON.stringify(o)).join('\n');
-}
-
 // ---------- toast simples ----------
 let toastT = null;
 function toast(msg, error=false){
@@ -515,7 +618,7 @@ function msgTemplate(num,titulo){
 }
 
 function promptCardHTML(key, titulo, texto){
-  const safeId = `prompt_${CSS.escape(key)}`.replace(/\s+/g,'_');
+  const safeId = `prompt_${key.replace(/[^a-z0-9_-]/gi,'_')}`;
   return `
   <div class="prompt-item">
     <h4 class="prompt-title">${titulo || key}</h4>
@@ -526,16 +629,18 @@ function promptCardHTML(key, titulo, texto){
   </div>`;
 }
 
-function renderPromptCards(prompts){
-  // Aceita dois formatos:
-  // 1) Objeto simples: { fundacao: "texto...", ascensao: "texto...", ... }
-  // 2) Objeto com metadados: { fundacao: { title: "...", text: "..." }, ... }
-  const entries = Object.entries(prompts);
-  if (!entries.length) return `<div class="prompt-item"><div class="prompt-text">Sem prompts.</div></div>`;
-  return entries.map(([key,val])=>{
-    if (val && typeof val === 'object' && ('text' in val || 'title' in val)){
-      return promptCardHTML(key, val.title || key, val.text || '');
-    }
-    return promptCardHTML(key, key, String(val ?? ''));
-  }).join('');
+// ---------- clipboard ----------
+async function copyToClipboard(text){
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch(e){
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch(e2) { console.warn('copy fallback failed', e2); }
+    document.body.removeChild(ta);
+    return false;
+  }
 }
