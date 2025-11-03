@@ -5,7 +5,7 @@ import { Store, statusCalc } from '../app.js';
 
 let chartRef = null; // barras (níveis)
 
-// ---------------- PARAMS (espelhados do TreinoView) ----------------
+// ---------------- PARAMS (baseados no TreinoView) ----------------
 const PARAMS = {
   'Fundação': {
     series: '3',
@@ -14,6 +14,7 @@ const PARAMS = {
     intensidade1RM: '50–65%',
     cadencia: '2:1–2:2',
     metodos: 'pirâmide truncada (±5%), circuito leve, isometria leve (2s)',
+    intensidades: ['≈50–65% (nível de base)'], // fixa
     cardio: [
       { tipo: 'LISS', duracao_min: 25, FCR: '60–65%', instrucao: 'Ritmo contínuo, conversa possível.' },
       { tipo: 'MISS (opcional)', duracao_min: 15, FCR: '65–70%', instrucao: 'Ritmo sustentado, fala entrecortada.' }
@@ -23,9 +24,10 @@ const PARAMS = {
     series: '3',
     reps: '10–14 (ajuste progressivo)',
     descanso: '60–90s',
-    intensidade1RM: '65–75% (conforme mesociclo)',
+    intensidade1RM: '65–75%',
     cadencia: '2:1–2:2',
     metodos: 'pirâmide, bi-set leve, drop simples, isometria (conforme meso)',
+    intensidades: ['≈65–75% (estável; sem periodização)'], // fixa (atende seu pedido)
     cardio: [
       { tipo: 'LISS', duracao_min: 30, FCR: '60–65%', instrucao: 'Ritmo contínuo.' },
       { tipo: 'MISS', duracao_min: 20, FCR: '65–75%', instrucao: 'Ritmo sustentado.' }
@@ -35,57 +37,85 @@ const PARAMS = {
     series: '4–5',
     reps: '8–12 (conforme foco)',
     descanso: '60–120s',
-    intensidade1RM: '70–85% (por mesociclo)',
+    intensidade1RM: '70–85%',
     cadencia: '2:1–2:2 / 3:1 em tensional',
     metodos: 'pirâmide crescente, bi-set/supersérie, drop, rest-pause, isometria (conforme meso)',
+    intensidades: [
+      'M1 · Volume Técnico (≈70%)',
+      'M2 · Densidade Tensional (≈75%)',
+      'M3 · Potência Controlada (≈80–85%)',
+      'M4 · Densidade Avançada (≈75%)',
+      'M5 · Lapidação Estética (≈80%)',
+      'M6 · Resistência sob Fadiga (≈80–85%)'
+    ],
     cardio: [
       { tipo: 'MISS', duracao_min: 20, FCR: '65–75%', instrucao: 'Ritmo sustentado.' }
     ],
     extra: [
-      'Distribuição temporal (respeite a sequência de intensidades selecionadas):',
-      '- Quebre o período em blocos semanais coerentes (ex.: 4–5 semanas por foco).',
-      '- Indique no topo de cada sessão a qual foco/mesociclo aquela semana pertence.'
+      'Distribuição temporal (respeite o foco/intensidade desta fase).',
+      '- Organize em blocos semanais coerentes.',
+      '- Indique no topo de cada sessão a qual foco/mesociclo pertence.'
     ]
   },
   'OverPrime': {
     series: '4–6',
     reps: '6–12 (conforme foco)',
     descanso: '60–150s',
-    intensidade1RM: '75–90% (por mesociclo)',
+    intensidade1RM: '75–90%',
     cadencia: 'variável (inclui cluster/pausas)',
     metodos: 'pirâmide inversa, rest-pause duplo, cluster, tri/giant set, parciais (conforme meso)',
+    intensidades: [
+      'O1 · Força Base Avançada (≈80%)',
+      'O2 · Densidade de Força (≈85%)',
+      'O3 · Potência & Tensão (≈85–90%)',
+      'O4 · Lapidação & Condicionamento (≈75–80%)',
+      'O5 · Pico Estético/Força Relativa (≈80–85%)',
+      'O6 · Densidade Final (≈80–90%)'
+    ],
     cardio: [
       { tipo: 'MISS', duracao_min: 20, FCR: '70–80%', instrucao: 'Ritmo desafiador.' }
     ],
     extra: [
-      'Distribuição temporal (respeite a sequência de intensidades selecionadas):',
-      '- Quebre o período em blocos semanais coerentes (ex.: 4–5 semanas por foco).',
-      '- Indique no topo de cada sessão a qual foco/mesociclo aquela semana pertence.'
+      'Distribuição temporal (respeite o foco/intensidade desta fase).',
+      '- Organize em blocos semanais coerentes.',
+      '- Indique no topo de cada sessão a qual foco/mesociclo pertence.'
     ]
   }
 };
 
-// gera blocos de cardio formatados (igual ao TreinoView)
+// Programações exigidas por nível
+const PROGRAMS_BY_LEVEL = {
+  'Fundação': ['ABC', 'ABCD'],
+  'Ascensão': ['ABC', 'ABCD'],
+  'Domínio':  ['ABC', 'ABCD', 'ABCDE'],
+  'OverPrime':['ABC', 'ABCD', 'ABCDE', 'ABCDEF']
+};
+
+const PERIODIZED_LEVELS = new Set(['Domínio', 'OverPrime']);
+
 function cardioLines(level) {
   const arr = PARAMS[level]?.cardio || [];
   if (!arr.length) return '';
   return arr.map(c => `• ${c.tipo} — ${c.duracao_min}min · ${c.FCR} · ${c.instrucao}`).join('\n');
 }
 
-// template de prompt por nível (com placeholders)
-function buildPromptTemplate(level) {
+function buildPromptTemplate({ level, program, intensityLabel }) {
   const p = PARAMS[level] || PARAMS['Fundação'];
-  const base = [
+  const periodized = PERIODIZED_LEVELS.has(level);
+
+  const linhas = [
     'Você é prescritor do sistema Bella Prime · Evo360.',
     'Gere um PROGRAMA DE TREINO estruturado seguindo as regras do nível.',
     '',
-    `Cliente: {{CLIENTE_NOME}} | Nível: ${level || '{{NIVEL}}'}`,
-    `Programa: {{PROGRAMA}}`,
+    `Cliente: {{CLIENTE_NOME}} | Nível: ${level}`,
+    `Programa: ${program}`,
     `Período: {{DATA_INICIO}} → {{DATA_VENCIMENTO}}`,
-    `{{INTENSIDADES}}`, // opcional
-    `{{OBJETIVO}}`,     // opcional
-    `{{RESTRICOES}}`,   // opcional
-    `{{OBSERVACOES}}`,  // opcional
+    periodized
+      ? `Foco/intensidade desta fase: ${intensityLabel}`
+      : `Intensidade alvo: ${p.intensidades?.[0] || p.intensidade1RM}`,
+    '{{OBJETIVO}}',
+    '{{RESTRICOES}}',
+    '{{OBSERVACOES}}',
     '',
     'Parâmetros do nível:',
     `- Séries: ${p.series}`,
@@ -103,52 +133,43 @@ function buildPromptTemplate(level) {
     cardioLines(level),
     '',
     'Formato de saída:',
-    '- Sessões A, B, C... com listas de exercícios e parâmetros (séries, reps, descanso, cadência).',
-    '- Cardio no final conforme FCR, indicando tipo, duração, %FCR e instrução prática.',
+    '- Sessões A, B, C… (parâmetros completos: séries, reps, descanso, cadência).',
+    '- Cardio no final com tipo, duração, %FCR e instrução prática.',
     '- Incluir observações do método quando aplicável (NUNCA explicar o gesto motor).'
   ];
 
-  if (p.extra && Array.isArray(p.extra)) base.push('', ...p.extra);
-  return base.filter(Boolean).join('\n');
+  if (periodized && p.extra?.length) {
+    linhas.push('', ...p.extra);
+  }
+  return linhas.filter(Boolean).join('\n');
 }
 
-// versão “universal” (sem parametrizar nível — para qualquer caso)
-function buildPromptUniversal() {
-  const base = [
+function buildUniversalTemplate() {
+  return [
     'Você é prescritor do sistema Bella Prime · Evo360.',
     'Gere um PROGRAMA DE TREINO estruturado.',
     '',
     'Cliente: {{CLIENTE_NOME}} | Nível: {{NIVEL}}',
     'Programa: {{PROGRAMA}}',
     'Período: {{DATA_INICIO}} → {{DATA_VENCIMENTO}}',
-    '{{INTENSIDADES}}',
+    'Intensidade: {{INTENSIDADE}}',
     '{{OBJETIVO}}',
     '{{RESTRICOES}}',
     '{{OBSERVACOES}}',
     '',
-    'Parâmetros do nível (preencha conforme o nível informado):',
+    'Parâmetros:',
     '- Séries: {{SERIES}}',
     '- Repetições: {{REPETICOES}}',
     '- Descanso: {{DESCANSO}}',
     '- %1RM: {{PERCENT_1RM}}',
     '- Cadência: {{CADENCIA}}',
-    '- Métodos aplicáveis: {{METODOS}}',
+    '- Métodos: {{METODOS}}',
     '',
-    'Estrutura obrigatória por sessão:',
-    '- Mobilidade (3 itens do grupo do dia).',
-    '- Principais (6–8 exercícios; ordem: 1 multiarticular principal; 2 secundário; 3 acessório composto; 4 isolador primário; 5 isolador secundário; 6 método; 7 core técnico opcional).',
+    'Estrutura por sessão: Mobilidade → Principais (6–8) → Core (opcional).',
+    'Cardio (Karvonen): Tipo {{CARDIO_TIPO}}, {{CARDIO_MIN}}min, FCR {{CARDIO_FCR}}.',
     '',
-    'Cardio (Karvonen):',
-    '- Tipo: {{CARDIO_TIPO}} · Duração: {{CARDIO_MIN}}min · FCR: {{CARDIO_FCR}} · Instrução: {{CARDIO_NOTAS}}',
-    '',
-    'Formato de saída:',
-    '- Sessões A, B, C... (parâmetros completos).',
-    '- Cardio ao final (tipo, duração, %FCR e instrução prática).',
-    '- Observações do método quando aplicável (não explicar gesto motor).',
-    '',
-    'Se o nível for Domínio/OverPrime, considere blocos semanais e a sequência de intensidades.'
-  ];
-  return base.join('\n');
+    'Se Domínio/OverPrime: respeite foco/meso desta fase.'
+  ].join('\n');
 }
 
 // ---------------- /PARAMS ----------------
@@ -163,7 +184,7 @@ export const DashboardView = {
         .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:9998}
         .modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:9999}
         .modal.show,.modal-backdrop.show{display:flex}
-        .modal-card{width:min(960px,92vw);max-height:86vh;overflow:auto;background:#121316;border:1px solid var(--border);
+        .modal-card{width:min(1080px,92vw);max-height:86vh;overflow:auto;background:#121316;border:1px solid var(--border);
           border-radius:14px;box-shadow:var(--shadow);padding:14px}
         .modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
         .modal-grid{display:grid;grid-template-columns:1fr;gap:10px}
@@ -171,8 +192,9 @@ export const DashboardView = {
         .msg-actions,.prompt-actions{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
         .msg-title,.prompt-title{font-weight:700;margin:0 0 6px}
         .msg-text,.prompt-text{white-space:pre-wrap}
+        .pill{display:inline-block;padding:3px 8px;border-radius:999px;border:1px solid var(--border);font-size:.8rem;opacity:.9;margin-right:6px}
         .muted{opacity:.85}
-        @media(min-width:860px){ .modal-grid{grid-template-columns:1fr 1fr} }
+        @media(min-width:960px){ .modal-grid{grid-template-columns:1fr 1fr} }
       </style>
     `;
 
@@ -257,11 +279,9 @@ export const DashboardView = {
             <button class="btn btn-outline" id="promptCloseBtn">Fechar</button>
           </div>
           <p class="muted" style="margin:0 0 8px">
-            *Templates com placeholders. Preencha depois de colar (ex.: {{CLIENTE_NOME}}, {{PROGRAMA}}, {{DATA_INICIO}}...).*
+            Templates com placeholders (ex.: {{CLIENTE_NOME}}, {{DATA_INICIO}}, {{DATA_VENCIMENTO}}).
           </p>
-          <div class="modal-grid" id="promptGrid">
-            <!-- preenchido em runtime -->
-          </div>
+          <div class="modal-grid" id="promptGrid"></div>
         </div>
       </div>
     `;
@@ -351,7 +371,7 @@ export const DashboardView = {
       toast('JSON Lines copiado para o clipboard.');
     });
 
-    // Renderização inicial
+    // Render inicial
     chartNiveis();
     renderTable();
 
@@ -363,10 +383,9 @@ export const DashboardView = {
     closeBtn.addEventListener('click',()=>{ modal.classList.remove('show'); back.classList.remove('show'); });
     back.addEventListener('click',()=>{ modal.classList.remove('show'); back.classList.remove('show'); });
 
-    // Mensagens rápidas com seus links
+    // Mensagens rápidas
     const BLOG = 'https://mbritodowglas-collab.github.io/mdpersonal/';
     const AVAL = 'https://mbritodowglas-collab.github.io/mdpersonal/avaliacao';
-
     const msgs = {
       msg1: `Oi! 👋 Seja bem-vinda!\nAqui eu falo sobre *treino feminino*, *emagrecimento real* e *neurociência de hábitos*.\n\nTe envio o link da **avaliação gratuita** pra montar teu diagnóstico? 💪✨\n\nAvaliação: ${AVAL}\nBlog: ${BLOG}`,
       msg2: `Oi! 🌹 Bem-vinda!\nTenho um material chamado **Bella Prime™** — um método que une treino, mente e hábitos.\nQuer dar uma olhada no conceito? 💫`,
@@ -374,12 +393,10 @@ export const DashboardView = {
       msg4: `Oi! 👋\nVi que preencheu o formulário mas ainda não recebi as fotos.\nSem elas não consigo ajustar o plano. Quer que te mande o exemplo de como tirar? 📸`,
       msg5: `Oi! 🌸 Tudo bem?\nTenho um eBook que explica como o *Tratamento Bella Prime* funciona — com treino, neurociência e mudança de hábitos.\nQuer que eu te envie pra dar uma olhada? 💪✨`
     };
-
     for (const k in msgs) {
       const el = document.getElementById(k);
       if (el) el.textContent = msgs[k];
     }
-
     document.querySelectorAll('[data-copy]').forEach(btn=>{
       btn.addEventListener('click',()=>{
         const target = document.querySelector(btn.dataset.copy);
@@ -400,22 +417,44 @@ export const DashboardView = {
     // ===== Modal de Prompts de Treino =====
     const pModal = $('#promptModal'); const pBack = $('#promptBackdrop');
     const pOpen = $('#openPromptBtn'); const pClose = $('#promptCloseBtn');
-
     pOpen.addEventListener('click',()=>{ pModal.classList.add('show'); pBack.classList.add('show'); });
     pClose.addEventListener('click',()=>{ pModal.classList.remove('show'); pBack.classList.remove('show'); });
     pBack.addEventListener('click',()=>{ pModal.classList.remove('show'); pBack.classList.remove('show'); });
 
-    // Monta cards com os templates de prompt (Fundação / Ascensão / Domínio / OverPrime + Universal)
+    // Monta todos os cards (Fundação/Ascensão = intens. fixa; Domínio/OverPrime = um por intensidade)
     const grid = document.getElementById('promptGrid');
     if (grid){
-      const items = [
-        ['universal', 'Template Universal', buildPromptUniversal()],
-        ['fundacao',  'Fundação',          buildPromptTemplate('Fundação')],
-        ['ascensao',  'Ascensão',          buildPromptTemplate('Ascensão')],
-        ['dominio',   'Domínio',           buildPromptTemplate('Domínio')],
-        ['overprime', 'OverPrime',         buildPromptTemplate('OverPrime')],
-      ];
-      grid.innerHTML = items.map(([key, title, txt]) => promptCardHTML(key, title, txt)).join('');
+      const allCards = [];
+
+      // Universal (opcional)
+      allCards.push(promptCardHTML('universal', 'Template Universal', buildUniversalTemplate(), ['Geral']));
+
+      // Por nível
+      for (const level of ['Fundação','Ascensão','Domínio','OverPrime']){
+        const programs = PROGRAMS_BY_LEVEL[level] || [];
+        const periodized = PERIODIZED_LEVELS.has(level);
+        const intens = PARAMS[level]?.intensidades || [];
+
+        if (!periodized) {
+          // intensidade fixa -> um card por programa
+          for (const program of programs){
+            const text = buildPromptTemplate({ level, program, intensityLabel: intens[0] || PARAMS[level].intensidade1RM });
+            allCards.push(promptCardHTML(`${level}_${program}`, `${level} — ${program}`, text, [level, program]));
+          }
+        } else {
+          // periodizado -> um card por intensidade para cada programa
+          for (const program of programs){
+            for (const intensity of intens){
+              const text = buildPromptTemplate({ level, program, intensityLabel: intensity });
+              const title = `${level} — ${program} — ${intensity}`;
+              const key = `${level}_${program}_${intensity}`.replace(/\s+/g,'_');
+              allCards.push(promptCardHTML(key, title, text, [level, program]));
+            }
+          }
+        }
+      }
+
+      grid.innerHTML = allCards.join('');
 
       // copiar prompt
       grid.querySelectorAll('[data-copy-prompt]').forEach(btn=>{
@@ -500,18 +539,8 @@ function escapeHTML(s){
   return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 }
 
-function safeCell(v){
-  if (v === null || v === undefined) return '';
-  return String(v).replace(/\r?\n/g,' ').replace(/"/g,'""');
-}
-
-function pick(obj, keys){
-  for (const k of keys){
-    const val = obj?.[k];
-    if (val != null && String(val).trim() !== '') return val;
-  }
-  return undefined;
-}
+function safeCell(v){ if (v == null) return ''; return String(v).replace(/\r?\n/g,' ').replace(/"/g,'""'); }
+function pick(obj, keys){ for (const k of keys){ const v = obj?.[k]; if (v!=null && String(v).trim()!=='') return v; } return undefined; }
 const toNumFlat = v => v == null ? undefined : Number(String(v).replace(',', '.'));
 function isFiniteNum(v){ return Number.isFinite(toNumFlat(v)); }
 
@@ -520,17 +549,14 @@ function latestEval(cliente){
   if (avs.length === 0) return {};
   avs.sort((a,b)=> (a.data||'').localeCompare(b.data||''));
   const last = avs[avs.length - 1] || {};
-
   const peso    = toNumFlat(pick(last, ["peso","Peso (kg)","peso_kg"]));
   const cintura = toNumFlat(pick(last, ["cintura","Cintura (cm)","cintura_cm"]));
   const quadril = toNumFlat(pick(last, ["quadril","Quadril (cm)","quadril_cm"]));
   const abdome  = toNumFlat(pick(last, ["abdome","Abdome (cm)","Abdome","abdome_cm","abdomen","abdome_cm"]));
   let   altura  = toNumFlat(pick(last, ["altura","Altura (cm)","altura_cm","Altura (m)","altura_m"]));
-  if (isFiniteNum(altura) && altura > 0 && altura <= 3) altura = altura * 100; // m -> cm
-
+  if (isFiniteNum(altura) && altura > 0 && altura <= 3) altura = altura * 100;
   const rcq = (isFiniteNum(cintura) && isFiniteNum(quadril) && quadril) ? (cintura / quadril) : (isFiniteNum(last?.rcq) ? Number(last.rcq) : undefined);
   const rce = (isFiniteNum(cintura) && isFiniteNum(altura) && altura) ? (cintura / altura) : (isFiniteNum(last?.whtr) ? Number(last.whtr) : undefined);
-
   return { data:last.data || '', peso, cintura, quadril, abdome, altura, rcq, rce };
 }
 
@@ -617,11 +643,13 @@ function msgTemplate(num,titulo){
   </div>`;
 }
 
-function promptCardHTML(key, titulo, texto){
+function promptCardHTML(key, titulo, texto, pills=[]){
   const safeId = `prompt_${key.replace(/[^a-z0-9_-]/gi,'_')}`;
+  const chips = (pills||[]).map(p=>`<span class="pill">${escapeHTML(p)}</span>`).join(' ');
   return `
   <div class="prompt-item">
     <h4 class="prompt-title">${titulo || key}</h4>
+    ${chips ? `<div style="margin:-4px 0 6px">${chips}</div>` : ''}
     <div class="prompt-text" id="${safeId}">${escapeHTML(texto || '')}</div>
     <div class="prompt-actions">
       <button class="btn btn-outline" data-copy-prompt="#${safeId}">Copiar prompt</button>
