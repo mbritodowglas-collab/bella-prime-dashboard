@@ -1,11 +1,12 @@
 // ================================
-// VIEW: Perfil da Cliente
+// VIEW: Perfil da Cliente (atualizado com %G)
 // ================================
 import { Store, PROFESSOR_FORM_URL } from '../app.js';
 
 let pesoChart = null;
 let rcqChart  = null;
 let rceChart  = null;
+let bfChart   = null; // novo: gráfico de %G
 
 export const ClienteView = {
   async template(id){
@@ -44,6 +45,7 @@ export const ClienteView = {
     const abdomeFmt  = nOrDash(abdomeVal, 0);
     const rcqFmt     = nOrDash(calcRCQ(ultimaAval), 3);
     const rceFmt     = nOrDash(calcRCE(ultimaAval), 3);
+    const bodyfatFmt = nOrDash(ultimaAval?.bodyfat, 1); // novo: %G formatado
 
     // --- respostas completas (para copiar) ---
     let blocoRespostas = '';
@@ -154,10 +156,10 @@ export const ClienteView = {
       <section class="card">
         <h3 style="margin-top:0">Métricas recentes</h3>
         <div class="table-wrap" style="overflow:auto">
-          <table class="table" style="min-width:640px">
+          <table class="table" style="min-width:760px">
             <thead>
               <tr>
-                <th>Data</th><th>Peso (kg)</th><th>Cintura (cm)</th><th>Quadril (cm)</th><th>Abdome (cm)</th><th>RCQ</th><th>RCE</th>
+                <th>Data</th><th>Peso (kg)</th><th>Cintura (cm)</th><th>Quadril (cm)</th><th>Abdome (cm)</th><th>RCQ</th><th>RCE</th><th>%G</th>
               </tr>
             </thead>
             <tbody>
@@ -169,6 +171,7 @@ export const ClienteView = {
                 <td>${abdomeFmt}</td>
                 <td>${rcqFmt}</td>
                 <td>${rceFmt}</td>
+                <td>${bodyfatFmt}</td>
               </tr>
             </tbody>
           </table>
@@ -213,11 +216,21 @@ export const ClienteView = {
       <section class="card chart-card">
         <div class="row" style="justify-content:space-between;align-items:flex-end;">
           <h3 style="margin:0">RCE (cintura/estatura)</h3>
-          <small style="opacity:.85">regra de bolso: manter &lt; 0,50</small>
+        <small style="opacity:.85">regra de bolso: manter &lt; 0,50</small>
         </div>
         <div id="rceEmpty" style="display:none;color:#aaa">Sem dados de cintura/estatura suficientes.</div>
         <canvas id="chartRCE" height="160"></canvas>
         <small style="opacity:.75">Linha guia 0,50 = cintura menor que metade da altura.</small>
+      </section>
+
+      <!-- novo: gráfico de %G -->
+      <section class="card chart-card">
+        <div class="row" style="justify-content:space-between;align-items:flex-end;">
+          <h3 style="margin:0">%G (Protocolo Marinha EUA)</h3>
+          <small style="opacity:.85">Se informado no Forms, usamos o valor reportado; senão, mostramos o estimado.</small>
+        </div>
+        <div id="bfEmpty" style="display:none;color:#aaa">Sem dados de %G suficientes.</div>
+        <canvas id="chartBF" height="160"></canvas>
       </section>
 
       <!-- Modal de Mensagens Rápidas -->
@@ -508,6 +521,30 @@ export const ClienteView = {
       });
       if (rceEmpty) rceEmpty.style.display = 'none';
     } else if (rceEmpty) { rceEmpty.style.display = 'block'; }
+
+    // %G (Body Fat) — novo
+    const bfCtx = document.getElementById('chartBF');
+    const bfEmpty = document.getElementById('bfEmpty');
+    const serieBF = (c.avaliacoes || [])
+      .filter(a => typeof a.bodyfat === 'number' && !isNaN(a.bodyfat))
+      .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
+    if (bfChart) bfChart.destroy();
+    if (bfCtx && serieBF.length >= 1) {
+      const labels = serieBF.map(a => a.data || '');
+      bfChart = new Chart(bfCtx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            { label:'%G', data: serieBF.map(a=>Number(a.bodyfat)), tension:0.35, borderWidth:3,
+              borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,0.18)', fill:true, pointRadius:4, pointHoverRadius:6 }
+          ]
+        },
+        options: { responsive:true, plugins:{ legend:{ display:false } },
+          scales:{ y:{ beginAtZero:false } } }
+      });
+      if (bfEmpty) bfEmpty.style.display = 'none';
+    } else if (bfEmpty) { bfEmpty.style.display = 'block'; }
   }
 };
 
