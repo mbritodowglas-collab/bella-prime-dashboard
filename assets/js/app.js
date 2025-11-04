@@ -133,6 +133,9 @@ function collectAnswersFromRaw(raw){
     'pescoço','pescoco','circunferencia do pescoco','pescoço (cm)','pescoco (cm)',
     // sexo/gênero (para %G)
     'sexo','gênero','genero','sexo biologico','sexo biológico',
+    // %G (vindo do Forms) — novos aliases para não irem ao _answers
+    '%g','% g','percentual de gordura','percentual_gordura','gordura corporal','gordura corporal (%)','gordura corporal %',
+    'bf','bf%','body fat','bodyfat','% body fat',
     // form do professor
     'novo_nivel','novonivel','nivel_novo','nivel aprovado','nivel_aprovado','nivel_definido',
     'aprovado','aprovacao','aprovação','aprovacao_professor','ok','apto','apta',
@@ -248,7 +251,7 @@ export const Store = {
 
         // Pescoço (para %G)
         const pescocoN  = toNum(pickByRegex(o, [
-          /\bpesco[cç]o\b/, /circunferencia do pesco[cç]o/
+          /\bpesco[cç]o\b/, /circunferencia do pescoco/
         ]));
 
         // Sexo / gênero (para %G)
@@ -262,8 +265,17 @@ export const Store = {
         const rcqCalc   = (Number.isFinite(cinturaN) && Number.isFinite(quadrilN) && quadrilN !== 0) ? (cinturaN / quadrilN) : undefined;
         const whtrCalc  = (Number.isFinite(cinturaN) && Number.isFinite(alturaN)  && alturaN  !== 0) ? (cinturaN / alturaN)  : undefined;
 
-        // % Gordura (Marinha EUA)
+        // %G do Forms (direto), com fallback no cálculo da Marinha EUA  —— PATCH
+        const bodyfatForm = toNum(pickByRegex(o, [
+          /^%?\s*g$/,                       // "%G" ou "g"
+          /\bpercentual.*gordura\b/,        // "percentual de gordura"
+          /\bgordura.*corporal\b/,          // "gordura corporal"
+          /\bbf%?\b/,                       // "BF" ou "BF%"
+          /\bbody\s*fat\b/,                 // "body fat"
+          /\bbodyfat\b/                     // "bodyfat"
+        ]));
         const bodyfatCalc = navyBodyFat(sexoNorm, cinturaN, quadrilN, pescocoN, alturaN);
+        const bodyfatFinal = Number.isFinite(bodyfatForm) ? bodyfatForm : (Number.isFinite(bodyfatCalc) ? bodyfatCalc : undefined);
 
         // nível default
         const nivelDefault = (() => {
@@ -317,7 +329,7 @@ export const Store = {
         }
 
         // --- Registrar avaliação (com métricas) ---
-        if (dataAval || Number.isFinite(base.pontuacao) || Number.isFinite(pesoN) || Number.isFinite(cinturaN) || Number.isFinite(quadrilN) || Number.isFinite(alturaN) || Number.isFinite(abdomenN) || Number.isFinite(pescocoN)) {
+        if (dataAval || Number.isFinite(base.pontuacao) || Number.isFinite(pesoN) || Number.isFinite(cinturaN) || Number.isFinite(quadrilN) || Number.isFinite(alturaN) || Number.isFinite(abdomenN) || Number.isFinite(pescocoN) || Number.isFinite(bodyfatFinal)) {
           const dataISO = /^\d{4}-\d{2}-\d{2}$/.test(String(dataAval)) ? String(dataAval) : todayISO();
           const sugestaoNivel = nivelPorPontuacao(base.pontuacao);
           const readiness = prontidaoPorPontuacao(base.pontuacao);
@@ -328,15 +340,15 @@ export const Store = {
             nivel: base.nivel,
             sugestaoNivel,
             readiness,
-            peso:    Number.isFinite(pesoN)    ? pesoN    : undefined,
-            cintura: Number.isFinite(cinturaN) ? cinturaN : undefined,
-            quadril: Number.isFinite(quadrilN) ? quadrilN : undefined,
-            altura:  Number.isFinite(alturaN)  ? alturaN  : undefined,   // cm
-            abdomen: Number.isFinite(abdomenN) ? abdomenN : undefined,   // cm
-            pescoco: Number.isFinite(pescocoN) ? pescocoN : undefined,   // cm
-            rcq:     Number.isFinite(rcqCalc)  ? rcqCalc  : undefined,
-            whtr:    Number.isFinite(whtrCalc) ? whtrCalc : undefined,
-            bodyfat: Number.isFinite(bodyfatCalc) ? bodyfatCalc : undefined
+            peso:    Number.isFinite(pesoN)        ? pesoN        : undefined,
+            cintura: Number.isFinite(cinturaN)     ? cinturaN     : undefined,
+            quadril: Number.isFinite(quadrilN)     ? quadrilN     : undefined,
+            altura:  Number.isFinite(alturaN)      ? alturaN      : undefined,   // cm
+            abdomen: Number.isFinite(abdomenN)     ? abdomenN     : undefined,   // cm
+            pescoco: Number.isFinite(pescocoN)     ? pescocoN     : undefined,   // cm
+            rcq:     Number.isFinite(rcqCalc)      ? rcqCalc      : undefined,
+            whtr:    Number.isFinite(whtrCalc)     ? whtrCalc     : undefined,
+            bodyfat: Number.isFinite(bodyfatFinal) ? bodyfatFinal : undefined    // %G (Forms > cálculo)
           });
         }
 
