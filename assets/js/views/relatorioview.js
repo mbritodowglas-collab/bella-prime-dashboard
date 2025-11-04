@@ -10,6 +10,7 @@ const LOGO_PNG_FALLBACK   = (typeof window !== 'undefined' && window.BP_BRAND_LO
 let pesoChart = null;
 let rcqChart  = null;
 let rceChart  = null;
+let bfChart   = null; // novo: gráfico de %G (opcional)
 
 export const RelatorioView = {
   async template(id){
@@ -65,9 +66,11 @@ export const RelatorioView = {
       "perimetro abdominal","circunferencia abdominal"
     ]);
 
-    // %G (Marinha) — se você já salvar esse campo na avaliação
+    // %G (Marinha) — aliases ampliados para casar com o app.js/Forms
     const bodyfatVal = pick(ultimaAval, [
-      "bodyfat","body_fat","bf","%g","gordura_percentual","bf_marinha","bf_navy"
+      "bodyfat","body_fat","bf","%g","g","percentual_gordura","gordura_percentual",
+      "gordura corporal","gordura corporal (%)","gordura corporal %",
+      "bf_marinha","bf_navy","body fat"
     ]);
 
     const peso    = nOrDash(pesoVal, 2);
@@ -102,6 +105,7 @@ export const RelatorioView = {
           .r-wrap{padding:0}
           .r-card{background:#fff}
         }
+        .row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
       </style>
 
       <div class="r-wrap">
@@ -130,6 +134,7 @@ export const RelatorioView = {
             ${c.email  ?`<p><b>E-mail:</b> ${esc(c.email)}</p>`:''}
             ${c.contato?`<p><b>WhatsApp:</b> ${esc(c.contato)}</p>`:''}
             ${c.cidade ?`<p><b>Cidade/Estado:</b> ${esc(c.cidade)}</p>`:''}
+            ${c.__tab  ?`<p class="muted" style="font-size:.9rem"><b>Origem dos dados:</b> ${esc(c.__tab)}</p>`:''}
           </div>
 
           <div class="r-card avoid-break">
@@ -174,7 +179,7 @@ export const RelatorioView = {
 
         <!-- Gráfico + explicação: RCQ -->
         <div class="r-card chart-card avoid-break" style="margin-top:14px">
-          <div class="row" style="justify-content:space-between;align-items:flex-end;">
+          <div class="row">
             <h3 style="margin:0">RCQ (Relação Cintura/Quadril)</h3>
             <div class="explain">
               <b>O que é:</b> cintura ÷ quadril — sinaliza acúmulo abdominal. 
@@ -187,7 +192,7 @@ export const RelatorioView = {
 
         <!-- Gráfico + explicação: RCE -->
         <div class="r-card chart-card avoid-break" style="margin-top:14px">
-          <div class="row" style="justify-content:space-between;align-items:flex-end;">
+          <div class="row">
             <h3 style="margin:0">RCE (Relação Cintura/Estatura)</h3>
             <div class="explain">
               <b>O que é:</b> cintura ÷ estatura. 
@@ -197,6 +202,19 @@ export const RelatorioView = {
           <div id="rceNote" class="muted" style="display:none;margin-bottom:6px"></div>
           <div id="rceEmpty" class="muted" style="display:none">Sem dados de RCE suficientes.</div>
           <canvas id="chartRCE" height="180"></canvas>
+        </div>
+
+        <!-- Gráfico + explicação: %G (opcional) -->
+        <div class="r-card chart-card avoid-break" style="margin-top:14px">
+          <div class="row">
+            <h3 style="margin:0">% Gordura Corporal (Marinha)</h3>
+            <div class="explain">
+              <b>O que é:</b> estimativa de gordura corporal total (%). 
+              <b>Faixa saudável (mulheres ativas):</b> ~20–30%.
+            </div>
+          </div>
+          <div id="bfEmpty" class="muted" style="display:none">Sem dados de %G suficientes.</div>
+          <canvas id="chartBF" height="180"></canvas>
         </div>
 
         <div class="r-card avoid-break" style="margin-top:14px">
@@ -236,7 +254,10 @@ export const RelatorioView = {
 
     const btnShare = document.getElementById('btnShare');
     btnShare?.addEventListener('click', async ()=>{
-      const url = `${location.origin}${location.pathname}#/relatorio/${encodeURIComponent(id)}`;
+      // seguro para file:// (ambiente local)
+      let originSafe = '';
+      try { originSafe = (location.origin && !location.origin.startsWith('file')) ? location.origin : ''; } catch {}
+      const url = `${originSafe}${location.pathname}#/relatorio/${encodeURIComponent(id)}`;
       try{
         await navigator.clipboard.writeText(url);
         btnShare.textContent = '✅ Link copiado';
@@ -337,6 +358,32 @@ export const RelatorioView = {
         note.textContent = 'Para plotar o RCE é necessário ter “altura” (em cm ou m) nas avaliações.';
       }
     }
+
+    // ----- %G (Marinha) -----
+    const serieBF = (c.avaliacoes || [])
+      .filter(a => isNum(a.bodyfat))
+      .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
+    const bfCtx = document.getElementById('chartBF');
+    const bfEmpty = document.getElementById('bfEmpty');
+    if (bfChart) bfChart.destroy();
+    if (bfCtx && serieBF.length >= 1){
+      const labels = serieBF.map(a=>a.data || '');
+      bfChart = new Chart(bfCtx, {
+        type:'line',
+        data:{
+          labels,
+          datasets:[{
+            label:'%G',
+            data: serieBF.map(a=>Number(a.bodyfat)),
+            tension:.35, borderWidth:3,
+            borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,.18)',
+            fill:true, pointRadius:4, pointHoverRadius:6
+          }]
+        },
+        options: baseLineOptions()
+      });
+      if (bfEmpty) bfEmpty.style.display='none';
+    } else if (bfEmpty){ bfEmpty.style.display='block'; }
   }
 };
 
