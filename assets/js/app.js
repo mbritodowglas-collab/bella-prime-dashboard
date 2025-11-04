@@ -11,6 +11,14 @@ import { RelatorioView } from './views/relatorioview.js';
 // ---------- Config gerais ----------
 const SHEETS_API = 'https://script.google.com/macros/s/AKfycbyAafbpJDWr4RF9hdTkzmnLLv1Ge258hk6jlnDo7ng2kk88GoWyJzp63rHZPMDJA-wy/exec';
 
+// Se o seu Apps Script aceita ?tab=<nome_da_aba>, declare aqui as abas a ler.
+// Mantém compatível: se alguma aba não existir, ignora e segue.
+const SHEETS_TABS = [
+  'avaliacao',
+  'reavaliacao',
+  'professor'
+];
+
 // Branding (lido pelo RelatorioView via import dinâmico)
 export const BRAND_NAME = 'Marcio Dowglas Treinador';
 export const RELATORIO_LOGO_PNG = './assets/img/logo-mdpersonal.png';
@@ -143,13 +151,38 @@ function collectAnswersFromRaw(raw){
 
 // ---------- Dados (Sheets -> seed.json) ----------
 async function loadSeed(){
-  try{
-    const r = await fetch(SHEETS_API, { cache:'no-store' });
-    if(!r.ok) throw new Error(`Sheets HTTP ${r.status}`);
+  // helper: busca uma aba específica (ou base sem tab)
+  const fetchTab = async (tabName) => {
+    const url = tabName ? `${SHEETS_API}?tab=${encodeURIComponent(tabName)}` : SHEETS_API;
+    const r = await fetch(url, { cache:'no-store' });
+    if (!r.ok) throw new Error(`Sheets HTTP ${r.status} (${tabName||'base'})`);
     const data = await r.json();
-    if(!Array.isArray(data)) throw new Error('Sheets retornou formato inválido');
-    console.log('Sheets OK:', data.length);
-    return data;
+    if (!Array.isArray(data)) throw new Error(`Formato inválido em ${tabName||'base'}`);
+    // anota a origem (não impacta views)
+    return data.map(row => ({ __tab: tabName || 'base', ...row }));
+  };
+
+  try{
+    let datasets = [];
+    // tenta por abas; se der erro geral, cai no catch/seed
+    if (Array.isArray(SHEETS_TABS) && SHEETS_TABS.length){
+      const parts = await Promise.allSettled(SHEETS_TABS.map(fetchTab));
+      for (const p of parts){
+        if (p.status === 'fulfilled') datasets = datasets.concat(p.value);
+        else console.warn('Aba falhou (ignorada):', p.reason?.message || p.reason);
+      }
+      // fallback: se todas as abas falharam, tenta a base sem tab
+      if (datasets.length === 0){
+        console.warn('Nenhuma aba retornou dados. Tentando base sem ?tab=');
+        datasets = await fetchTab(null);
+      }
+    } else {
+      // não há abas definidas: usa base
+      datasets = await fetchTab(null);
+    }
+
+    console.log('Sheets OK (linhas totais):', datasets.length);
+    return datasets;
   }catch(e){
     console.warn('Sheets falhou, usando seed.json:', e);
     const r2 = await fetch('./assets/data/seed.json', { cache:'no-store' });
@@ -306,6 +339,10 @@ export const Store = {
             bodyfat: Number.isFinite(bodyfatCalc) ? bodyfatCalc : undefined
           });
         }
+
+        // marca de origem (debug/inspeção; não usada em views)
+        if (raw && raw.__tab) base.__tab = raw.__tab;
+
         return base;
       });
 
