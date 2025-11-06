@@ -1,5 +1,5 @@
 // ================================
-// VIEW: Perfil da Cliente (atualizado com %G e parsing robusto)
+// VIEW: Perfil da Cliente (atualizado com %G, RCE e fallbacks de FR1/FR2)
 // ================================
 import { Store, PROFESSOR_FORM_URL } from '../app.js';
 
@@ -8,14 +8,13 @@ let rcqChart  = null;
 let rceChart  = null;
 let bfChart   = null; // gráfico de %G (reportado ou estimado)
 
-// ---------- helpers ----------
+// ---------- helpers básicos ----------
 function escapeHTML(s){
   return String(s || '').replace(/[&<>"']/g, m =>
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 }
 function escapePlain(s){ return String(s || '').replace(/\r?\n/g, '\n'); }
 
-// Lê número simples (aceita vírgula) de uma string qualquer
 function parseNumber(raw){
   if (raw == null) return undefined;
   const s = String(raw).replace(',', '.');
@@ -24,8 +23,43 @@ function parseNumber(raw){
   const n = Number(m[0]);
   return Number.isFinite(n) ? n : undefined;
 }
+function isNum(v){ return Number.isFinite(parseNumber(v)); }
 
-// Lê COM UNIDADE e devolve em CENTÍMETROS (aceita m, cm, mm ou sem unidade)
+function nOrDash(v, d=0){
+  const n = parseNumber(v);
+  return Number.isFinite(n) ? n.toFixed(d) : '-';
+}
+function pick(obj, keys){
+  for (const k of keys){
+    const val = obj?.[k];
+    if (val != null && String(val).trim() !== '') return val;
+  }
+  return undefined;
+}
+
+// ---------- unificar respostas (FR1/FR2) ----------
+function mergedAnswers(cliente){
+  const pools = [];
+  if (cliente?._answers) pools.push(cliente._answers);   // FR1
+  if (cliente?._answers2) pools.push(cliente._answers2); // FR2 (se houver)
+  if (cliente?.answers2)  pools.push(cliente.answers2);  // variações
+  if (cliente?.forms && typeof cliente.forms === 'object'){
+    for (const [k,v] of Object.entries(cliente.forms)){
+      if (v && typeof v === 'object' && /(form|responses|fr)\s*2/i.test(k)) pools.push(v);
+    }
+  }
+  return Object.assign({}, ...pools);
+}
+function pickFromAny(cliente, aval, keys){
+  const m = mergedAnswers(cliente);
+  for (const k of keys){
+    if (m?.[k] != null && String(m[k]).trim() !== '') return m[k];
+    if (aval?.[k] != null && String(aval[k]).trim() !== '') return aval[k];
+  }
+  return undefined;
+}
+
+// ---------- parsing de medidas ----------
 function parseLengthCm(raw){
   if (raw == null) return undefined;
   let s = String(raw).trim().toLowerCase().replace(',', '.');
@@ -34,62 +68,51 @@ function parseLengthCm(raw){
   let val = Number(m[1]);
   const unit = (m[2] ? m[2].toLowerCase() : '');
   if (!Number.isFinite(val)) return undefined;
-  if (unit === 'm') return val * 100;
+  if (unit === 'm')  return val * 100;
   if (unit === 'mm') return val / 10;
-  // “centimetros/centímetros” ou “cm” caem aqui como cm
   if (unit && unit !== 'm' && unit !== 'mm') return val; // cm
-  // sem unidade: se ≤ 3, supomos metros; senão, cm
-  return val <= 3 ? val * 100 : val;
+  return val <= 3 ? val * 100 : val; // sem unidade: ≤3 supõe metros
 }
 
-// pega de avaliação OU respostas (sinônimos) — altura em cm
+// altura/pescoço com fallback FR1/FR2
 function getAlturaFrom(cliente, aval){
-  const direct = parseLengthCm(aval?.altura);
-  if (Number.isFinite(direct)) return direct;
-  const ans = cliente?._answers || {};
-  const cand = ans['altura'] ?? ans['Altura'] ?? ans['Altura (cm)'] ?? ans['altura_cm']
-            ?? ans['Altura (m)'] ?? ans['altura_m'] ?? ans['estatura'] ?? ans['Estatura (cm)'];
-  return parseLengthCm(cand);
+  const v = pickFromAny(cliente, aval,
+    ['altura','Altura','Altura (cm)','altura_cm','Altura (m)','altura_m','estatura','Estatura (cm)']);
+  return parseLengthCm(v);
 }
-
-// pescoço em cm
 function getPescocoFrom(cliente, aval){
-  const direct = parseLengthCm(aval?.pescoco ?? aval?.pescoço);
-  if (Number.isFinite(direct)) return direct;
-  const ans = cliente?._answers || {};
-  const cand = ans['pescoco'] ?? ans['Pescoço'] ?? ans['Pescoço (cm)']
-            ?? ans['pescoco_cm'] ?? ans['circ_pescoco'] ?? ans['Circunferência do Pescoço'];
-  return parseLengthCm(cand);
+  const v = pickFromAny(cliente, aval,
+    ['pescoco','pescoço','Pescoço','Pescoço (cm)','pescoco_cm','circ_pescoco','Circunferência do Pescoço']);
+  return parseLengthCm(v);
 }
 
-function toNum(v){ return parseNumber(v); }
-function nOrDash(v, d=0){
-  const n = parseNumber(v);
-  return Number.isFinite(n) ? n.toFixed(d) : '-';
-}
-function isNum(v){ return Number.isFinite(parseNumber(v)); }
-
-function pick(obj, keys){
-  for (const k of keys){
-    const val = obj?.[k];
-    if (val != null && String(val).trim() !== '') return val;
-  }
-  return undefined;
-}
+// RCQ direto a partir da avaliação
 function calcRCQ(a){
   const c = parseNumber(a?.cintura);
   const q = parseNumber(a?.quadril);
   return (Number.isFinite(c) && Number.isFinite(q) && q !== 0) ? (c/q) : undefined;
 }
-// RCE com fallback de ALTURA a partir das respostas
+// RCE usando altura via fallback
 function calcRCEWithFallback(cliente, a){
   const c = parseNumber(a?.cintura);
   const h = getAlturaFrom(cliente, a);
-  return (Number.isFinite(c) && Number.isFinite(h) && h > 0) ? (c/h) : (isNum(a?.whtr) ? parseNumber(a.whtr) : undefined);
+  return (Number.isFinite(c) && Number.isFinite(h) && h > 0) ? (c/h)
+       : (isNum(a?.whtr) ? parseNumber(a.whtr) : undefined);
 }
+
+// %G (Marinha) — feminina — entradas em cm
+function navyBodyFatFemaleFromCm({ cintura_cm, quadril_cm, pescoco_cm, altura_cm }){
+  const w = parseNumber(cintura_cm), h = parseNumber(quadril_cm), n = parseNumber(pescoco_cm), ht = parseNumber(altura_cm);
+  if (![w,h,n,ht].every(Number.isFinite)) return undefined;
+  const wi = w/2.54, hi = h/2.54, ni = n/2.54, hti = ht/2.54;
+  if (wi + hi - ni <= 0 || hti <= 0) return undefined;
+  const bf = 163.205*Math.log10(wi + hi - ni) - 97.684*Math.log10(hti) - 78.387;
+  return Number.isFinite(bf) ? bf : undefined;
+}
+
 function badgeColor(readiness){
   if (readiness === 'Pronta para subir') return '#2e7d32';
-  if (readiness === 'Quase lá') return '#f9a825';
+  if (readiness === 'Quase lá')        return '#f9a825';
   return '#455a64';
 }
 function calcStatusTreino(t){
@@ -100,22 +123,13 @@ function calcStatusTreino(t){
   return 'Vencido';
 }
 
-// %G (Marinha) — feminina — recebe cm, converte p/ in
-function navyBodyFatFemaleFromCm({ cintura_cm, quadril_cm, pescoco_cm, altura_cm }){
-  const w = parseNumber(cintura_cm), h = parseNumber(quadril_cm), n = parseNumber(pescoco_cm), ht = parseNumber(altura_cm);
-  if (![w,h,n,ht].every(Number.isFinite)) return undefined;
-  const wi = w/2.54, hi = h/2.54, ni = n/2.54, hti = ht/2.54;
-  if (wi + hi - ni <= 0 || hti <= 0) return undefined;
-  const bf = 163.205*Math.log10(wi + hi - ni) - 97.684*Math.log10(hti) - 78.387;
-  return Number.isFinite(bf) ? bf : undefined;
-}
-
+// ============== VIEW ==============
 export const ClienteView = {
   async template(id){
     const c = Store.byId(id);
     if (!c) return `<div class="card"><h2>Cliente não encontrada</h2></div>`;
 
-    // histórico de avaliações (tabela)
+    // histórico rápido
     const historico = (c.avaliacoes || [])
       .slice()
       .sort((a,b)=> (a.data||'').localeCompare(b.data||''))
@@ -135,26 +149,54 @@ export const ClienteView = {
       .sort((a,b)=>(a.data||'').localeCompare(b.data||''))
       .pop() || {};
 
-    const pesoVal    = pick(ultimaAval, ["peso", "Peso (kg)", "peso_kg"]);
-    const cinturaVal = pick(ultimaAval, ["cintura", "Cintura (cm)", "cintura_cm"]);
-    const quadrilVal = pick(ultimaAval, ["quadril", "Quadril (cm)", "quadril_cm"]);
+    // ---- MÉTRICAS COM FALLBACK (peso/altura/pescoço) ----
+    const pesoRaw     = pickFromAny(c, ultimaAval,
+      ['peso','Peso','Peso (kg)','peso (kg)','peso_kg','Qual é o seu peso?']);
+    const cinturaRaw  = pick(ultimaAval, ["cintura","Cintura (cm)","cintura_cm"]);
+    const quadrilRaw  = pick(ultimaAval, ["quadril","Quadril (cm)","quadril_cm"]);
+    const abdomeRaw   = pick(ultimaAval, [
+      "abdomen","abdome","abdomem","abdominal","abdomen_cm","abdome_cm","Abdome (cm)","Abdomen (cm)"
+    ]);
+    const alturaCm    = getAlturaFrom(c, ultimaAval);
+    const pescocoCm   = getPescocoFrom(c, ultimaAval);
 
-    // Aceitar variantes de abdômen
-    const abdomeVal  = pick(ultimaAval, ["abdomen","abdome","abdomem","abdominal","abdomen_cm","abdome_cm","Abdome (cm)","Abdomen (cm)"]);
+    const rcqVal      = calcRCQ(ultimaAval);
+    const rceVal      = calcRCEWithFallback(c, ultimaAval);
 
-    const pesoFmt    = nOrDash(pesoVal, 2);
-    const cinturaFmt = nOrDash(cinturaVal, 0);
-    const quadrilFmt = nOrDash(quadrilVal, 0);
-    const abdomeFmt  = nOrDash(abdomeVal, 0);
-    const rcqFmt     = nOrDash(calcRCQ(ultimaAval), 3);
-    const rceFmt     = nOrDash(calcRCEWithFallback(c, ultimaAval), 3);
+    // %G reportado na avaliação?
+    let bfNum = parseNumber(pick(ultimaAval, [
+      "bodyfat","body_fat","bf","%g","g","percentual_gordura","gordura_percentual",
+      "gordura corporal","gordura corporal (%)","gordura corporal %","bf_marinha","bf_navy","body fat"
+    ]));
+    if (!Number.isFinite(bfNum)){
+      // estima via Marinha
+      const est = navyBodyFatFemaleFromCm({
+        cintura_cm: parseNumber(cinturaRaw) ?? parseNumber(abdomeRaw),
+        quadril_cm: parseNumber(quadrilRaw),
+        pescoco_cm: pescocoCm,
+        altura_cm : alturaCm
+      });
+      if (Number.isFinite(est)) bfNum = est;
+    }
+
+    // formatos
+    const pesoFmt     = nOrDash(pesoRaw, 2);
+    const cinturaFmt  = nOrDash(cinturaRaw, 0);
+    const quadrilFmt  = nOrDash(quadrilRaw, 0);
+    const abdomeFmt   = nOrDash(abdomeRaw, 0);
+    const alturaFmt   = Number.isFinite(alturaCm)  ? alturaCm.toFixed(0)   : '-';
+    const pescocoFmt  = Number.isFinite(pescocoCm) ? pescocoCm.toFixed(0)  : '-';
+    const rcqFmt      = nOrDash(rcqVal, 3);
+    const rceFmt      = nOrDash(rceVal, 3);
+    const bfFmt       = Number.isFinite(bfNum) ? bfNum.toFixed(1) : '-';
 
     // --- respostas completas (para copiar) ---
     let blocoRespostas = '';
-    if (c._answers && Object.keys(c._answers).length > 0) {
-      const lista = Object.entries(c._answers)
+    const _ans = mergedAnswers(c);
+    if (_ans && Object.keys(_ans).length > 0) {
+      const lista = Object.entries(_ans)
         .map(([k,v]) => `<li><b>${escapeHTML(k)}:</b> ${escapeHTML(v)}</li>`).join('');
-      const texto = Object.entries(c._answers).map(([k,v]) => `${k}: ${v}`).join('\n');
+      const texto = Object.entries(_ans).map(([k,v]) => `${k}: ${v}`).join('\n');
       blocoRespostas = `
         <section class="card">
           <h3>Respostas completas (Sheets)</h3>
@@ -184,7 +226,7 @@ export const ClienteView = {
       : [];
 
     const linhasTreino = treinos.map(t => {
-      const status = calcStatusTreino(t); // Ativo / Vencido
+      const status = calcStatusTreino(t);
       return `
         <tr>
           <td><span class="badge">${escapeHTML(t.programa)}</span></td>
@@ -255,10 +297,19 @@ export const ClienteView = {
       <section class="card">
         <h3 style="margin-top:0">Métricas recentes</h3>
         <div class="table-wrap" style="overflow:auto">
-          <table class="table" style="min-width:760px">
+          <table class="table" style="min-width:920px">
             <thead>
               <tr>
-                <th>Data</th><th>Peso (kg)</th><th>Cintura (cm)</th><th>Quadril (cm)</th><th>Abdome (cm)</th><th>RCQ</th><th>RCE</th><th>%G</th>
+                <th>Data</th>
+                <th>Peso (kg)</th>
+                <th>Cintura (cm)</th>
+                <th>Quadril (cm)</th>
+                <th>Abdome (cm)</th>
+                <th>Altura (cm)</th>
+                <th>Pescoço (cm)</th>
+                <th>RCQ</th>
+                <th>RCE</th>
+                <th>%G</th>
               </tr>
             </thead>
             <tbody>
@@ -268,14 +319,16 @@ export const ClienteView = {
                 <td>${cinturaFmt}</td>
                 <td>${quadrilFmt}</td>
                 <td>${abdomeFmt}</td>
+                <td>${alturaFmt}</td>
+                <td>${pescocoFmt}</td>
                 <td>${rcqFmt}</td>
                 <td>${rceFmt}</td>
-                <td><!-- mostraremos no gráfico; aqui deixamos '-' porque pode ser estimado --></td>
+                <td>${bfFmt}</td>
               </tr>
             </tbody>
           </table>
         </div>
-        <small style="opacity:.75">Valores vindos das avaliações; altura/pescoço podem ser lidos das respostas para estimar RCE e %G.</small>
+        <small style="opacity:.75">Circunferências vêm das avaliações; peso/altura/pescoço podem vir das respostas (FR1/FR2) para estimar RCE e %G.</small>
       </section>
 
       <section class="card">
@@ -297,6 +350,7 @@ export const ClienteView = {
 
       ${blocoRespostas}
 
+      <!-- GRÁFICOS -->
       <section class="card chart-card">
         <h3>Evolução do Peso (kg)</h3>
         <div id="pesoEmpty" style="display:none;color:#aaa">Sem dados de peso suficientes.</div>
@@ -331,10 +385,10 @@ export const ClienteView = {
         <canvas id="chartBF" height="160"></canvas>
       </section>
 
-      <!-- Modal de Mensagens Rápidas (inalterado) -->
+      <!-- Modal de Mensagens Rápidas (conteúdo igual ao seu atual) -->
       <div class="modal-backdrop" id="msgBackdrop"></div>
       <div class="modal" id="msgModal" aria-hidden="true">
-        <!-- ... (conteúdo do modal permanece igual) ... -->
+        <!-- ... -->
       </div>
     `;
   },
@@ -363,16 +417,19 @@ export const ClienteView = {
       });
     }
 
-    // (mensagens rápidas — permanece igual ao teu arquivo atual)
-
     // ========== Gráficos ==========
     if (typeof window.Chart !== 'function') return;
 
-    // Peso
+    // Peso — aceita fallback do FR1/FR2 para cada avaliação
     const pesoCtx = document.getElementById('chartPeso');
     const pesoEmpty = document.getElementById('pesoEmpty');
     const seriePeso = (c.avaliacoes || [])
-      .filter(a => isNum(a.peso))
+      .map(a => {
+        const p = pickFromAny(c, a, ['peso','Peso','Peso (kg)','peso (kg)','peso_kg','Qual é o seu peso?']);
+        const pn = parseNumber(p);
+        return { ...a, pesoNum: Number.isFinite(pn) ? pn : undefined };
+      })
+      .filter(a => Number.isFinite(a.pesoNum))
       .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
     if (pesoChart) pesoChart.destroy();
     if (pesoCtx && seriePeso.length >= 1) {
@@ -382,7 +439,7 @@ export const ClienteView = {
           labels: seriePeso.map(a => a.data || ''),
           datasets: [{
             label: 'Peso (kg)',
-            data: seriePeso.map(a => parseNumber(a.peso)),
+            data: seriePeso.map(a => a.pesoNum),
             tension: 0.35, borderWidth: 3,
             borderColor: '#d4af37', backgroundColor: 'rgba(212,175,55,0.18)',
             fill: true, pointRadius: 4, pointHoverRadius: 6
@@ -417,7 +474,7 @@ export const ClienteView = {
       if (rcqEmpty) rcqEmpty.style.display = 'none';
     } else if (rcqEmpty) { rcqEmpty.style.display = 'block'; }
 
-    // RCE (usa fallback de altura a partir das respostas)
+    // RCE (usa fallback de altura das respostas)
     const rceCtx = document.getElementById('chartRCE');
     const rceEmpty = document.getElementById('rceEmpty');
     const serieRCE = (c.avaliacoes || [])
@@ -445,22 +502,21 @@ export const ClienteView = {
     } else if (rceEmpty) { rceEmpty.style.display = 'block'; }
 
     // %G (reportado OU estimado)
-    const alturaGlobal = getAlturaFrom(c, {});    // redundância útil
+    const alturaGlobal = getAlturaFrom(c, {});
     const pescocoGlobal = getPescocoFrom(c, {});
     const bfCtx = document.getElementById('chartBF');
     const bfEmpty = document.getElementById('bfEmpty');
     const serieBF = (c.avaliacoes || [])
       .map(a => {
-        if (isNum(a.bodyfat)) return { ...a, bodyfat: parseNumber(a.bodyfat) };
-        // estimativa
+        if (isNum(a.bodyfat)) return { ...a, bfNum: parseNumber(a.bodyfat) };
         const cintura = parseNumber(a.cintura) ?? parseNumber(a.abdome);
         const quadril = parseNumber(a.quadril);
         const h = getAlturaFrom(c, a) ?? alturaGlobal;
         const n = getPescocoFrom(c, a) ?? pescocoGlobal;
         const est = navyBodyFatFemaleFromCm({ cintura_cm:cintura, quadril_cm:quadril, pescoco_cm:n, altura_cm:h });
-        return Number.isFinite(est) ? { ...a, bodyfat: est } : a;
+        return Number.isFinite(est) ? { ...a, bfNum: est } : a;
       })
-      .filter(a => isNum(a.bodyfat))
+      .filter(a => Number.isFinite(a.bfNum))
       .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
     if (bfChart) bfChart.destroy();
     if (bfCtx && serieBF.length >= 1) {
@@ -470,7 +526,7 @@ export const ClienteView = {
         data: {
           labels,
           datasets: [
-            { label:'%G', data: serieBF.map(a=>parseNumber(a.bodyfat)), tension:0.35, borderWidth:3,
+            { label:'%G', data: serieBF.map(a=>a.bfNum), tension:0.35, borderWidth:3,
               borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,0.18)', fill:true, pointRadius:4, pointHoverRadius:6 }
           ]
         },
@@ -479,7 +535,7 @@ export const ClienteView = {
       if (bfEmpty) bfEmpty.style.display = 'none';
     } else if (bfEmpty) { bfEmpty.style.display = 'block'; }
 
-    // Excluir treino (inalterado)
+    // Excluir treino
     document.querySelectorAll('.btn-del-treino').forEach(btn => {
       btn.addEventListener('click', () => {
         const tid = btn.getAttribute('data-treino');
