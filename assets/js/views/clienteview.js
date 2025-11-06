@@ -222,9 +222,11 @@ export const ClienteView = {
       .pop() || {};
 
     // ---- MÉTRICAS COM FALLBACK (peso/altura/pescoço) ----
-    const pesoRaw     = pickFromAny(c, ultimaAval,
-      ['peso','Peso','Peso (kg)','peso (kg)','peso_kg','Qual é o seu peso?'])
-      ?? pickFuzzyFromAnswers(c, [/^peso(\s|\(|$)/, /peso.*kg/]);
+    const pesoRaw = (
+      pickFromAny(c, ultimaAval, ['peso','Peso','Peso (kg)','peso (kg)','peso_kg','Qual é o seu peso?'])
+      ?? pickFuzzyFromAnswers(c, [/^peso(\s|\(|$)/, /peso.*kg/])
+      ?? pickFuzzyFromObject(ultimaAval, [/^peso(\s|\(|$)/, /peso.*kg/, /^kg$/])
+    );
 
     const cinturaRaw  = pick(ultimaAval, ["cintura","Cintura (cm)","cintura_cm"]);
     const quadrilRaw  = pick(ultimaAval, ["quadril","Quadril (cm)","quadril_cm"]);
@@ -454,7 +456,7 @@ export const ClienteView = {
       <section class="card chart-card">
         <div class="row" style="justify-content:space-between;align-items:flex-end;">
           <h3 style="margin:0">%G (Protocolo Marinha EUA)</h3>
-          <small style="opacity:.85">Usa valor do Forms ou estimativa (altura, pescoço, cintura, quadril).</small>
+        <small style="opacity:.85">Usa valor do Forms ou estimativa (altura, pescoço, cintura, quadril).</small>
         </div>
         <div id="bfEmpty" style="display:none;color:#aaa">Sem dados de %G suficientes.</div>
         <canvas id="chartBF" height="160"></canvas>
@@ -495,13 +497,15 @@ export const ClienteView = {
     // ========== Gráficos ==========
     if (typeof window.Chart !== 'function') return;
 
-    // Peso — aceita fallback + fuzzy do FR1/FR2 para cada avaliação
+    // Peso — aceita fallback + fuzzy do FR1/FR2 e fuzzy na própria avaliação
     const pesoCtx = document.getElementById('chartPeso');
     const pesoEmpty = document.getElementById('pesoEmpty');
     const seriePeso = (c.avaliacoes || [])
       .map(a => {
-        const p = pickFromAny(c, a, ['peso','Peso','Peso (kg)','peso (kg)','peso_kg','Qual é o seu peso?'])
-              ?? pickFuzzyFromAnswers(c, [/^peso(\s|\(|$)/, /peso.*kg/]);
+        const p =
+          pickFromAny(c, a, ['peso','Peso','Peso (kg)','peso (kg)','peso_kg','Qual é o seu peso?'])
+          ?? pickFuzzyFromAnswers(c, [/^peso(\s|\(|$)/, /peso.*kg/])
+          ?? pickFuzzyFromObject(a, [/^peso(\s|\(|$)/, /peso.*kg/, /^kg$/]);
         const pn = parseNumber(p);
         return { ...a, pesoNum: Number.isFinite(pn) ? pn : undefined };
       })
