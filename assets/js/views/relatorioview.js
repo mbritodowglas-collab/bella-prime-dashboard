@@ -11,55 +11,70 @@ let rcqChart  = null;
 let rceChart  = null;
 let bfChart   = null;
 
-// ---------- helpers genéricos ----------
+// -------- helpers base --------
 function esc(s){ return String(s || '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m])); }
-function nOrDash(v, d=0){ if (v == null || v === '') return '-'; const n = Number(String(v).replace(',', '.')); return Number.isFinite(n) ? n.toFixed(d) : '-'; }
-function isNum(v){ const n = Number(String(v)); return Number.isFinite(n); }
+function nOrDash(v, d=0){ const n = parseNumber(v); return Number.isFinite(n) ? n.toFixed(d) : '-'; }
+function isNum(v){ return Number.isFinite(parseNumber(v)); }
 function pick(obj, keys){ for (const k of keys){ const val = obj?.[k]; if (val != null && String(val).trim() !== '') return val; } return undefined; }
 function baseLineOptions(){ return { responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:false } } }; }
 
-// ---------- extra: pegar altura/pescoço de avaliação OU respostas ----------
-function toNum(v){ if (v==null || v==='') return undefined; const n = Number(String(v).replace(',', '.')); return Number.isFinite(n)? n : undefined; }
-function getAlturaFrom(cliente, aval){ // cm
-  const direct = toNum(aval?.altura);
-  if (Number.isFinite(direct)) return direct <= 3 ? direct*100 : direct;
-  const ans = cliente?._answers || {};
-  const cand = pick(ans, [
-    'altura','Altura','Altura (cm)','altura_cm','Altura (m)','altura_m','estatura','Estatura (cm)'
-  ]);
-  let h = toNum(cand);
-  if (!Number.isFinite(h)) return undefined;
-  return h <= 3 ? h*100 : h;
+// -------- parsing de medidas --------
+function parseNumber(raw){
+  if (raw == null) return undefined;
+  const s = String(raw).replace(',', '.');
+  const m = s.match(/-?\d*\.?\d+/);
+  if (!m) return undefined;
+  const n = Number(m[0]);
+  return Number.isFinite(n) ? n : undefined;
 }
-function getPescocoFrom(cliente, aval){ // cm
-  const direct = toNum(aval?.pescoco);
+function parseLengthCm(raw){
+  if (raw == null) return undefined;
+  let s = String(raw).trim().toLowerCase().replace(',', '.');
+  const m = s.match(/(-?\d*\.?\d+)\s*(mm|cm|m|centimetros|centímetros)?/i);
+  if (!m) return undefined;
+  let val = Number(m[1]);
+  const unit = (m[2] ? m[2].toLowerCase() : '');
+  if (!Number.isFinite(val)) return undefined;
+  if (unit === 'm') return val * 100;
+  if (unit === 'mm') return val / 10;
+  if (unit && unit !== 'm' && unit !== 'mm') return val; // cm
+  return val <= 3 ? val * 100 : val;
+}
+
+// buscar altura/pescoço em avaliação ou respostas
+function getAlturaFrom(cliente, aval){
+  const direct = parseLengthCm(aval?.altura);
   if (Number.isFinite(direct)) return direct;
   const ans = cliente?._answers || {};
-  const cand = pick(ans, [
-    'pescoco','Pescoço','Pescoço (cm)','pescoco_cm','circ_pescoco','Circunferência do Pescoço'
-  ]);
-  return toNum(cand);
+  const cand = ans['altura'] ?? ans['Altura'] ?? ans['Altura (cm)'] ?? ans['altura_cm']
+            ?? ans['Altura (m)'] ?? ans['altura_m'] ?? ans['estatura'] ?? ans['Estatura (cm)'];
+  return parseLengthCm(cand);
+}
+function getPescocoFrom(cliente, aval){
+  const direct = parseLengthCm(aval?.pescoco ?? aval?.pescoço);
+  if (Number.isFinite(direct)) return direct;
+  const ans = cliente?._answers || {};
+  const cand = ans['pescoco'] ?? ans['Pescoço'] ?? ans['Pescoço (cm)']
+            ?? ans['pescoco_cm'] ?? ans['circ_pescoco'] ?? ans['Circunferência do Pescoço'];
+  return parseLengthCm(cand);
 }
 
-// RCQ direto da avaliação
+// RCQ direto
 function calcRCQ(a){
-  const c = toNum(a?.cintura);
-  const q = toNum(a?.quadril);
-  return (Number.isFinite(c) && Number.isFinite(q) && q!==0) ? (c/q) : undefined;
+  const c = parseNumber(a?.cintura);
+  const q = parseNumber(a?.quadril);
+  return (Number.isFinite(c) && Number.isFinite(q) && q !== 0) ? (c/q) : undefined;
 }
-
-// RCE usando altura da avaliação OU respostas
+// RCE com fallback
 function calcRCEWithFallback(cliente, a){
-  const c = toNum(a?.cintura);
-  const h = getAlturaFrom(cliente, a); // cm
-  return (Number.isFinite(c) && Number.isFinite(h) && h>0) ? (c/h) : (isNum(a?.whtr) ? Number(a.whtr) : undefined);
+  const c = parseNumber(a?.cintura);
+  const h = getAlturaFrom(cliente, a);
+  return (Number.isFinite(c) && Number.isFinite(h) && h > 0) ? (c/h) : (isNum(a?.whtr) ? parseNumber(a.whtr) : undefined);
 }
 
-// %G estimado (Marinha) — versão feminina
-// Fórmula oficial usa polegadas; convertemos cm -> in dividindo por 2.54.
-// %BF = 163.205*log10(waist + hip - neck) - 97.684*log10(height) - 78.387
+// %G (Marinha) — feminina
 function navyBodyFatFemaleFromCm({ cintura_cm, quadril_cm, pescoco_cm, altura_cm }){
-  const w = toNum(cintura_cm), h = toNum(quadril_cm), n = toNum(pescoco_cm), ht = toNum(altura_cm);
+  const w = parseNumber(cintura_cm), h = parseNumber(quadril_cm), n = parseNumber(pescoco_cm), ht = parseNumber(altura_cm);
   if (![w,h,n,ht].every(Number.isFinite)) return undefined;
   const wi = w/2.54, hi = h/2.54, ni = n/2.54, hti = ht/2.54;
   if (wi + hi - ni <= 0 || hti <= 0) return undefined;
@@ -77,7 +92,6 @@ export const RelatorioView = {
       .sort((a,b)=>(a.data||'').localeCompare(b.data||''))
       .pop() || {};
 
-    // normalização de treinos
     const treinos = (c.treinos||[])
       .slice()
       .map(t => ({
@@ -96,25 +110,20 @@ export const RelatorioView = {
     const hoje = new Date();
     const ts   = `${hoje.toLocaleDateString('pt-BR')} ${hoje.toLocaleTimeString('pt-BR')}`;
 
-    // Branding com fallback
+    // Branding (fallback)
     let BRAND_NAME = BRAND_NAME_FALLBACK;
     let RELATORIO_LOGO_PNG = LOGO_PNG_FALLBACK;
     try {
       const mod = await import('../app.js');
       BRAND_NAME = mod.BRAND_NAME || BRAND_NAME;
       RELATORIO_LOGO_PNG = mod.RELATORIO_LOGO_PNG || RELATORIO_LOGO_PNG;
-    } catch(_) {}
+    } catch (_) {}
 
     // métricas
     const pesoVal    = pick(ultimaAval, ["peso", "Peso (kg)", "peso_kg"]);
     const cinturaVal = pick(ultimaAval, ["cintura", "Cintura (cm)", "cintura_cm"]);
     const quadrilVal = pick(ultimaAval, ["quadril", "Quadril (cm)", "quadril_cm"]);
-
-    const abdomeVal  = pick(ultimaAval, [
-      "abdomen","abdome","abdomem","abdominal","abdomen_cm","abdome_cm",
-      "Abdomen (cm)","Abdome (cm)","Abdome","perimetro_abdominal","circunferencia_abdominal",
-      "Perímetro Abdominal","Circunferência Abdominal","perimetro abdominal","circunferencia abdominal"
-    ]);
+    const abdomeVal  = pick(ultimaAval, ["abdomen","abdome","abdomem","abdominal","abdomen_cm","abdome_cm","Abdome (cm)","Abdomen (cm)"]);
 
     const bodyfatVal = pick(ultimaAval, [
       "bodyfat","body_fat","bf","%g","g","percentual_gordura","gordura_percentual",
@@ -124,15 +133,13 @@ export const RelatorioView = {
     const alturaCm   = getAlturaFrom(c, ultimaAval);
     const pescocoCm  = getPescocoFrom(c, ultimaAval);
 
-    // RCE com fallback p/ altura das respostas
     const rceCalc = calcRCEWithFallback(c, ultimaAval);
 
-    // %G: usa reportado; se não houver, estima
-    let bodyfatNumber = toNum(bodyfatVal);
+    let bodyfatNumber = parseNumber(bodyfatVal);
     if (!Number.isFinite(bodyfatNumber)){
       const est = navyBodyFatFemaleFromCm({
-        cintura_cm: toNum(cinturaVal) ?? toNum(abdomeVal),
-        quadril_cm: toNum(quadrilVal),
+        cintura_cm: parseNumber(cinturaVal) ?? parseNumber(abdomeVal),
+        quadril_cm: parseNumber(quadrilVal),
         pescoco_cm: pescocoCm,
         altura_cm : alturaCm
       });
@@ -145,7 +152,7 @@ export const RelatorioView = {
     const abdome  = nOrDash(abdomeVal, 0);
     const rcq     = nOrDash(calcRCQ(ultimaAval), 3);
     const rce     = nOrDash(rceCalc, 3);
-    const bodyfat = (Number.isFinite(bodyfatNumber) ? bodyfatNumber.toFixed(1) : '-');
+    const bodyfat = Number.isFinite(bodyfatNumber) ? bodyfatNumber.toFixed(1) : '-';
 
     return `
       <style>
@@ -225,6 +232,7 @@ export const RelatorioView = {
           </div>
         </div>
 
+        <!-- Gráficos (peso, RCQ, RCE, %G) — mantidos como no teu arquivo -->
         <div class="r-card chart-card avoid-break" style="margin-top:14px">
           <h3 style="margin-top:0">Evolução do Peso</h3>
           <div id="pesoEmpty" class="muted" style="display:none">Sem dados de peso suficientes.</div>
@@ -232,29 +240,23 @@ export const RelatorioView = {
         </div>
 
         <div class="r-card chart-card avoid-break" style="margin-top:14px">
-          <div class="row">
-            <h3 style="margin:0">RCQ (Relação Cintura/Quadril)</h3>
-            <div class="explain"><b>O que é:</b> cintura ÷ quadril. <b>Alvo (mulheres):</b> ~&lt; 0,85.</div>
-          </div>
+          <div class="row"><h3 style="margin:0">RCQ (Relação Cintura/Quadril)</h3>
+            <div class="explain"><b>O que é:</b> cintura ÷ quadril. <b>Alvo (mulheres):</b> ≲ 0,85.</div></div>
           <div id="rcqEmpty" class="muted" style="display:none">Sem dados de RCQ suficientes.</div>
           <canvas id="chartRCQ" height="180"></canvas>
         </div>
 
         <div class="r-card chart-card avoid-break" style="margin-top:14px">
-          <div class="row">
-            <h3 style="margin:0">RCE (Relação Cintura/Estatura)</h3>
-            <div class="explain"><b>O que é:</b> cintura ÷ estatura. <b>Regra de bolso:</b> manter &lt; 0,50.</div>
-          </div>
+          <div class="row"><h3 style="margin:0">RCE (Relação Cintura/Estatura)</h3>
+            <div class="explain"><b>Regra de bolso:</b> manter &lt; 0,50.</div></div>
           <div id="rceNote" class="muted" style="display:none;margin-bottom:6px"></div>
           <div id="rceEmpty" class="muted" style="display:none">Sem dados de RCE suficientes.</div>
           <canvas id="chartRCE" height="180"></canvas>
         </div>
 
         <div class="r-card chart-card avoid-break" style="margin-top:14px">
-          <div class="row">
-            <h3 style="margin:0">% Gordura Corporal (Marinha)</h3>
-            <div class="explain">Se não houver valor reportado no Forms, mostramos o estimado (altura, pescoço, cintura e quadril).</div>
-          </div>
+          <div class="row"><h3 style="margin:0">% Gordura Corporal (Marinha)</h3>
+            <div class="explain">Usa o valor reportado ou a estimativa (altura, pescoço, cintura, quadril).</div></div>
           <div id="bfEmpty" class="muted" style="display:none">Sem dados de %G suficientes.</div>
           <canvas id="chartBF" height="180"></canvas>
         </div>
@@ -316,7 +318,7 @@ export const RelatorioView = {
     if (pesoCtx && seriePeso.length >= 1){
       pesoChart = new Chart(pesoCtx, {
         type:'line',
-        data:{ labels: seriePeso.map(a=>a.data||''), datasets:[{ label:'Peso (kg)', data: seriePeso.map(a=>Number(a.peso)), tension:.35, borderWidth:3, borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,0.18)', fill:true, pointRadius:4, pointHoverRadius:6 }]},
+        data:{ labels: seriePeso.map(a=>a.data||''), datasets:[{ label:'Peso (kg)', data: seriePeso.map(a=>parseNumber(a.peso)), tension:.35, borderWidth:3, borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,0.18)', fill:true, pointRadius:4, pointHoverRadius:6 }]},
         options: baseLineOptions()
       });
       pesoEmpty.style.display='none';
@@ -335,7 +337,7 @@ export const RelatorioView = {
       rcqChart = new Chart(rcqCtx, {
         type:'line',
         data:{ labels, datasets:[
-          { label:'RCQ', data: serieRCQ.map(a=>Number(a.rcq)), tension:.35, borderWidth:3, borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,.18)', fill:true, pointRadius:4, pointHoverRadius:6 },
+          { label:'RCQ', data: serieRCQ.map(a=>parseNumber(a.rcq)), tension:.35, borderWidth:3, borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,.18)', fill:true, pointRadius:4, pointHoverRadius:6 },
           { label:'Guia ~0,85 (mulheres)', data: labels.map(()=>0.85), borderWidth:1, borderColor:'#888', pointRadius:0, fill:false, borderDash:[6,4], tension:0 }
         ]},
         options: baseLineOptions()
@@ -343,21 +345,21 @@ export const RelatorioView = {
       rcqEmpty.style.display='none';
     } else if (rcqEmpty){ rcqEmpty.style.display='block'; }
 
-    // RCE (usa altura por fallback das respostas)
+    // RCE (com fallback)
     const serieRCE = (c.avaliacoes || [])
       .map(a => ({ ...a, rce: calcRCEWithFallback(c, a) }))
       .filter(a => isNum(a.rce))
       .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
     const rceCtx = document.getElementById('chartRCE');
     const rceEmpty = document.getElementById('rceEmpty');
-    const rceNote = document.getElementById('rceNote');
+    const note = document.getElementById('rceNote');
     if (rceChart) rceChart.destroy();
     if (rceCtx && serieRCE.length >= 1){
       const labels = serieRCE.map(a=>a.data || '');
       rceChart = new Chart(rceCtx, {
         type:'line',
         data:{ labels, datasets:[
-          { label:'RCE', data: serieRCE.map(a=>Number(a.rce)), tension:.35, borderWidth:3, borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,.18)', fill:true, pointRadius:4, pointHoverRadius:6 },
+          { label:'RCE', data: serieRCE.map(a=>parseNumber(a.rce)), tension:.35, borderWidth:3, borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,.18)', fill:true, pointRadius:4, pointHoverRadius:6 },
           { label:'Guia 0,50', data: labels.map(()=>0.50), borderWidth:1, borderColor:'#888', pointRadius:0, fill:false, borderDash:[6,4], tension:0 }
         ]},
         options: { ...baseLineOptions(), scales:{ y:{ beginAtZero:false, suggestedMin:0.35, suggestedMax:0.8 } } }
@@ -365,21 +367,21 @@ export const RelatorioView = {
       rceEmpty.style.display='none';
     } else {
       if (rceEmpty) rceEmpty.style.display='block';
-      if (rceNote){ rceNote.style.display='block'; rceNote.textContent = 'Para plotar o RCE precisamos de “altura” (cm) na avaliação ou nas respostas.'; }
+      if (note){ note.style.display='block'; note.textContent = 'Para plotar o RCE precisamos de “altura” (cm) — pode vir do Forms ou das respostas.'; }
     }
 
     // %G — reportado ou estimado
-    const alturaGlobal = getAlturaFrom(c, {});  // caso não haja nas entradas
+    const alturaGlobal = getAlturaFrom(c, {});
     const pescocoGlobal = getPescocoFrom(c, {});
     const serieBF = (c.avaliacoes || [])
       .map(a => {
-        if (isNum(a.bodyfat)) return { ...a, bodyfat: Number(a.bodyfat) };
-        const cintura = toNum(a.cintura) ?? toNum(a.abdome);
-        const quadril = toNum(a.quadril);
+        if (isNum(a.bodyfat)) return { ...a, bodyfat: parseNumber(a.bodyfat) };
+        const cintura = parseNumber(a.cintura) ?? parseNumber(a.abdome);
+        const quadril = parseNumber(a.quadril);
         const h = getAlturaFrom(c, a) ?? alturaGlobal;
         const n = getPescocoFrom(c, a) ?? pescocoGlobal;
         const est = navyBodyFatFemaleFromCm({ cintura_cm:cintura, quadril_cm:quadril, pescoco_cm:n, altura_cm:h });
-        return (Number.isFinite(est)) ? { ...a, bodyfat: est } : a;
+        return Number.isFinite(est) ? { ...a, bodyfat: est } : a;
       })
       .filter(a => isNum(a.bodyfat))
       .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
@@ -390,7 +392,7 @@ export const RelatorioView = {
       const labels = serieBF.map(a=>a.data || '');
       bfChart = new Chart(bfCtx, {
         type:'line',
-        data:{ labels, datasets:[{ label:'%G', data: serieBF.map(a=>Number(a.bodyfat)), tension:.35, borderWidth:3, borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,.18)', fill:true, pointRadius:4, pointHoverRadius:6 }]},
+        data:{ labels, datasets:[{ label:'%G', data: serieBF.map(a=>parseNumber(a.bodyfat)), tension:.35, borderWidth:3, borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,.18)', fill:true, pointRadius:4, pointHoverRadius:6 }]},
         options: baseLineOptions()
       });
       bfEmpty.style.display='none';
