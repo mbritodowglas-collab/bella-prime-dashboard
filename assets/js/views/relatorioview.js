@@ -10,7 +10,7 @@ const LOGO_PNG_FALLBACK   = (typeof window !== 'undefined' && window.BP_BRAND_LO
 let pesoChart = null;
 let rcqChart  = null;
 let rceChart  = null;
-let bfChart   = null; // gráfico de %G (salvo ou estimado)
+let bfChart   = null; // novo: gráfico de %G (opcional)
 
 export const RelatorioView = {
   async template(id){
@@ -52,17 +52,9 @@ export const RelatorioView = {
     } catch (_) {}
 
     // ---------- métricas mostradas na tabela ----------
-    const pesoVal     = pick(ultimaAval, ["peso", "Peso (kg)", "peso_kg"]);
-    const cinturaVal  = pick(ultimaAval, ["cintura", "Cintura (cm)", "cintura_cm"]);
-    const quadrilVal  = pick(ultimaAval, ["quadril", "Quadril (cm)", "quadril_cm"]);
-
-    // Altura e pescoço — aliases para suportar variações do Forms/Sheets
-    const alturaVal   = pick(ultimaAval, ["altura","estatura","altura_cm","altura (cm)","height"]);
-    const pescocoVal  = pick(ultimaAval, [
-      "pescoco","pescoço","pescoco_cm","pescoço (cm)",
-      "circunferencia do pescoco","circunferência do pescoço",
-      "circunferencia_pescoco","neck","neck_cm"
-    ]);
+    const pesoVal    = pick(ultimaAval, ["peso", "Peso (kg)", "peso_kg"]);
+    const cinturaVal = pick(ultimaAval, ["cintura", "Cintura (cm)", "cintura_cm"]);
+    const quadrilVal = pick(ultimaAval, ["quadril", "Quadril (cm)", "quadril_cm"]);
 
     // Abdômen — aceita várias variações usuais do Sheets
     const abdomeVal  = pick(ultimaAval, [
@@ -75,31 +67,19 @@ export const RelatorioView = {
     ]);
 
     // %G (Marinha) — aliases ampliados para casar com o app.js/Forms
-    const bodyfatSaved = pick(ultimaAval, [
+    const bodyfatVal = pick(ultimaAval, [
       "bodyfat","body_fat","bf","%g","g","percentual_gordura","gordura_percentual",
       "gordura corporal","gordura corporal (%)","gordura corporal %",
       "bf_marinha","bf_navy","body fat"
     ]);
 
-    // formatações
     const peso    = nOrDash(pesoVal, 2);
     const cintura = nOrDash(cinturaVal, 0);
     const quadril = nOrDash(quadrilVal, 0);
     const abdome  = nOrDash(abdomeVal, 0);
-
     const rcq     = nOrDash(calcRCQ(ultimaAval), 3);
     const rce     = nOrDash(calcRCE(ultimaAval), 3);
-
-    // %G salvo ou estimado (Navy)
-    const sexoInferido = inferSexo(c) || 'F';
-    const bfLocal = navyBodyFat(
-      sexoInferido,
-      toNum(cinturaVal),
-      toNum(quadrilVal),
-      toNum(pescocoVal),
-      toNum(alturaVal)
-    );
-    const bodyfat = nOrDash((bodyfatSaved ?? bfLocal), 1);
+    const bodyfat = nOrDash(bodyfatVal, 1);
 
     return `
       <style>
@@ -187,7 +167,6 @@ export const RelatorioView = {
                 </tbody>
               </table>
             </div>
-            <small class="muted">RCE exige altura; %G usa o valor salvo ou estimativa Navy quando possível.</small>
           </div>
         </div>
 
@@ -225,7 +204,7 @@ export const RelatorioView = {
           <canvas id="chartRCE" height="180"></canvas>
         </div>
 
-        <!-- Gráfico + explicação: %G (salvo/estimado) -->
+        <!-- Gráfico + explicação: %G (opcional) -->
         <div class="r-card chart-card avoid-break" style="margin-top:14px">
           <div class="row">
             <h3 style="margin:0">% Gordura Corporal (Marinha)</h3>
@@ -234,7 +213,7 @@ export const RelatorioView = {
               <b>Faixa saudável (mulheres ativas):</b> ~20–30%.
             </div>
           </div>
-          <div id="bfEmpty" class="muted" style="display:none">Sem dados suficientes para estimar/plotar %G.</div>
+          <div id="bfEmpty" class="muted" style="display:none">Sem dados de %G suficientes.</div>
           <canvas id="chartBF" height="180"></canvas>
         </div>
 
@@ -380,23 +359,10 @@ export const RelatorioView = {
       }
     }
 
-    // ----- %G (Marinha): salvo ou estimado -----
+    // ----- %G (Marinha) -----
     const serieBF = (c.avaliacoes || [])
-      .map(a => {
-        if (isNum(a.bodyfat)) return a; // já salvo
-        // tenta estimar com Navy
-        const est = navyBodyFat(
-          inferSexo(c) || 'F',
-          toNum(a.cintura),
-          toNum(a.quadril),
-          toNum(a.pescoco || a['pescoço']),
-          toNum(a.altura)
-        );
-        return (typeof est === 'number') ? { ...a, bodyfat: est } : a;
-      })
       .filter(a => isNum(a.bodyfat))
       .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
-
     const bfCtx = document.getElementById('chartBF');
     const bfEmpty = document.getElementById('bfEmpty');
     if (bfChart) bfChart.destroy();
@@ -431,11 +397,6 @@ function isNum(v){
   const n = Number(v);
   return Number.isFinite(n);
 }
-function toNum(v){
-  if (v == null || v === '') return undefined;
-  const n = Number(String(v).replace(',', '.'));
-  return Number.isFinite(n) ? n : undefined;
-}
 function pick(obj, keys){
   for (const k of keys){
     const val = obj?.[k];
@@ -464,35 +425,4 @@ function baseLineOptions(){
 function esc(s){
   return String(s || '').replace(/[&<>"']/g, m =>
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
-}
-
-// --- %G (Marinha EUA) helpers ---
-function cmToIn(cm){ return Number.isFinite(cm) ? (cm / 2.54) : undefined; }
-function log10(x){ return Math.log(x) / Math.LN10; }
-function navyBodyFat(sexo, cinturaCm, quadrilCm, pescocoCm, alturaCm){
-  const C = cmToIn(cinturaCm);
-  const H = cmToIn(alturaCm);
-  const N = cmToIn(pescocoCm);
-  const Q = cmToIn(quadrilCm);
-  if (!Number.isFinite(C) || !Number.isFinite(H) || !Number.isFinite(N)) return undefined;
-
-  if (sexo === 'M'){
-    const diff = C - N;
-    if (diff <= 0) return undefined;
-    const bf = 86.010 * log10(diff) - 70.041 * log10(H) + 36.76;
-    return Number.isFinite(bf) ? Number(Math.max(0, bf).toFixed(1)) : undefined;
-  } else {
-    if (!Number.isFinite(Q)) return undefined;
-    const sum = C + Q - N;
-    if (sum <= 0) return undefined;
-    const bf = 163.205 * log10(sum) - 97.684 * log10(H) - 78.387;
-    return Number.isFinite(bf) ? Number(Math.max(0, bf).toFixed(1)) : undefined;
-  }
-}
-function inferSexo(c){
-  const txt = Object.values(c?._answers||{}).join(' ').toLowerCase();
-  if (!txt) return undefined;
-  if (/\bmasc|masculino|homem|male\b/.test(txt)) return 'M';
-  if (/\bfem|feminino|mulher|female\b/.test(txt)) return 'F';
-  return undefined;
 }
