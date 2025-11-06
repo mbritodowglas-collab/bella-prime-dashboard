@@ -171,16 +171,22 @@ function getPescocoFrom(cliente, aval){
   return parseLengthCm(raw);
 }
 
-// RCQ direto a partir da avaliação
-function calcRCQ(a){
-  const c = parseNumber(a?.cintura);
-  const q = parseNumber(a?.quadril);
+// RCQ com fallback (avaliação → FR1/FR2/scan)
+function calcRCQWithFallback(cliente, a){
+  const c = parseNumber(
+    pickNumericPreferAval(a, cliente, ['cintura','Cintura (cm)','cintura_cm'], [/cintur/])
+  );
+  const q = parseNumber(
+    pickNumericPreferAval(a, cliente, ['quadril','Quadril (cm)','quadril_cm'], [/quadril/])
+  );
   return (Number.isFinite(c) && Number.isFinite(q) && q !== 0) ? (c/q) : undefined;
 }
 
-// RCE usando altura via fallback
+// RCE usando altura via fallback + cintura via fallback
 function calcRCEWithFallback(cliente, a){
-  const c = parseNumber(a?.cintura);
+  const c = parseNumber(
+    pickNumericPreferAval(a, cliente, ['cintura','Cintura (cm)','cintura_cm'], [/cintur/])
+  );
   const h = getAlturaFrom(cliente, a);
   return (Number.isFinite(c) && Number.isFinite(h) && h > 0) ? (c/h)
        : (isNum(a?.whtr) ? parseNumber(a.whtr) : undefined);
@@ -246,7 +252,7 @@ export const ClienteView = {
       .sort((a,b)=>(a.data||'').localeCompare(b.data||''))
       .pop() || {};
 
-    // ---- MÉTRICAS COM FALLBACK (peso/altura/pescoço) ----
+    // ---- MÉTRICAS COM FALLBACK (peso/altura/pescoço/circunferências) ----
     // Peso: PRIORIDADE avaliação → fuzzy na avaliação → FR1/FR2 (com validação numérica)
     const pesoRaw = pickNumericPreferAval(
       ultimaAval, c,
@@ -254,16 +260,27 @@ export const ClienteView = {
       [/^peso(\s|\(|$)/, /peso.*kg/, /^kg$/]
     );
 
-    const cinturaRaw  = pick(ultimaAval, ["cintura","Cintura (cm)","cintura_cm"]);
-    const quadrilRaw  = pick(ultimaAval, ["quadril","Quadril (cm)","quadril_cm"]);
-    const abdomeRaw   = pick(ultimaAval, [
-      "abdomen","abdome","abdomem","abdominal","abdomen_cm","abdome_cm","Abdome (cm)","Abdomen (cm)"
-    ]);
+    // Circunferências com fallback
+    const cinturaRaw = pickNumericPreferAval(
+      ultimaAval, c,
+      ['cintura','Cintura (cm)','cintura_cm'],
+      [/cintur/]
+    );
+    const quadrilRaw = pickNumericPreferAval(
+      ultimaAval, c,
+      ['quadril','Quadril (cm)','quadril_cm'],
+      [/quadril/]
+    );
+    const abdomeRaw = pickNumericPreferAval(
+      ultimaAval, c,
+      ['abdomen','abdome','abdomem','abdominal','abdomen_cm','abdome_cm','Abdome (cm)','Abdomen (cm)'],
+      [/abdom/]
+    );
 
     const alturaCm    = getAlturaFrom(c, ultimaAval);
     const pescocoCm   = getPescocoFrom(c, ultimaAval);
 
-    const rcqVal      = calcRCQ(ultimaAval);
+    const rcqVal      = calcRCQWithFallback(c, ultimaAval);
     const rceVal      = calcRCEWithFallback(c, ultimaAval);
 
     // %G reportado na avaliação?
@@ -431,7 +448,7 @@ export const ClienteView = {
             </tbody>
           </table>
         </div>
-        <small style="opacity:.75">Circunferências vêm das avaliações; peso/altura/pescoço priorizam a avaliação e só caem para FR1/FR2 se estiverem ausentes.</small>
+        <small style="opacity:.75">Circunferências vêm das avaliações/Forms; peso/altura/pescoço priorizam a avaliação e só caem para FR1/FR2 se estiverem ausentes.</small>
       </section>
 
       <!-- GRÁFICOS -->
@@ -463,7 +480,7 @@ export const ClienteView = {
       <section class="card chart-card">
         <div class="row" style="justify-content:space-between;align-items:flex-end;">
           <h3 style="margin:0">%G (Protocolo Marinha EUA)</h3>
-          <small style="opacity:.85">Usa valor do Forms ou estimativa (altura, pescoço, cintura, quadril).</small>
+        <small style="opacity:.85">Usa valor do Forms ou estimativa (altura, pescoço, cintura, quadril).</small>
         </div>
         <div id="bfEmpty" style="display:none;color:#aaa">Sem dados de %G suficientes.</div>
         <canvas id="chartBF" height="160" style="width:100%;height:240px;display:block"></canvas>
@@ -560,11 +577,11 @@ export const ClienteView = {
       if (pesoEmpty) pesoEmpty.style.display = 'none';
     } else if (pesoEmpty) { pesoEmpty.style.display = 'block'; }
 
-    // RCQ
+    // RCQ (fallback em cada ponto da série)
     const rcqCtx = document.getElementById('chartRCQ');
     const rcqEmpty = document.getElementById('rcqEmpty');
     const serieRCQ = (c.avaliacoes || [])
-      .map(a => ({ ...a, rcq: calcRCQ(a) }))
+      .map(a => ({ ...a, rcq: calcRCQWithFallback(c, a) }))
       .filter(a => Number.isFinite(a.rcq))
       .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
     if (rcqChart) rcqChart.destroy();
@@ -585,7 +602,7 @@ export const ClienteView = {
       if (rcqEmpty) rcqEmpty.style.display = 'none';
     } else if (rcqEmpty) { rcqEmpty.style.display = 'block'; }
 
-    // RCE (usa fallback de altura das respostas/avaliacao)
+    // RCE (usa fallback de altura e cintura)
     const rceCtx = document.getElementById('chartRCE');
     const rceEmpty = document.getElementById('rceEmpty');
     const serieRCE = (c.avaliacoes || [])
@@ -613,7 +630,7 @@ export const ClienteView = {
       if (rceEmpty) rceEmpty.style.display = 'none';
     } else if (rceEmpty) { rceEmpty.style.display = 'block'; }
 
-    // %G (reportado OU estimado)
+    // %G (reportado OU estimado; usa fallbacks para cintura/quadril/altura/pescoço)
     const alturaGlobal = getAlturaFrom(c, {});
     const pescocoGlobal = getPescocoFrom(c, {});
     const bfCtx = document.getElementById('chartBF');
@@ -621,8 +638,14 @@ export const ClienteView = {
     const serieBF = (c.avaliacoes || [])
       .map(a => {
         if (isNum(a.bodyfat)) return { ...a, bfNum: parseNumber(a.bodyfat) };
-        const cintura = parseNumber(a.cintura) ?? parseNumber(a.abdome);
-        const quadril = parseNumber(a.quadril);
+
+        const cintura = parseNumber(
+          pickNumericPreferAval(a, c, ['cintura','Cintura (cm)','cintura_cm'], [/cintur/])
+          ?? pickNumericPreferAval(a, c, ['abdomen','abdome','abdomem','abdominal','abdomen_cm','abdome_cm','Abdome (cm)','Abdomen (cm)'], [/abdom/])
+        );
+        const quadril = parseNumber(
+          pickNumericPreferAval(a, c, ['quadril','Quadril (cm)','quadril_cm'], [/quadril/])
+        );
         const h = getAlturaFrom(c, a) ?? alturaGlobal;
         const n = getPescocoFrom(c, a) ?? pescocoGlobal;
         const est = navyBodyFatFemaleFromCm({ cintura_cm:cintura, quadril_cm:quadril, pescoco_cm:n, altura_cm:h });
