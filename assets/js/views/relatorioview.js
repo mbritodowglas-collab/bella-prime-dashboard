@@ -13,12 +13,8 @@ let bfChart   = null;
 
 // -------- helpers base --------
 function esc(s){ return String(s || '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m])); }
-function nOrDash(v, d=0){ const n = parseNumber(v); return Number.isFinite(n) ? n.toFixed(d) : '-'; }
-function isNum(v){ return Number.isFinite(parseNumber(v)); }
-function pick(obj, keys){ for (const k of keys){ const val = obj?.[k]; if (val != null && String(val).trim() !== '') return val; } return undefined; }
-function baseLineOptions(){ return { responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:false } } }; }
+function escapePlain(s){ return String(s || '').replace(/\r?\n/g, '\n'); }
 
-// -------- parsing de medidas --------
 function parseNumber(raw){
   if (raw == null) return undefined;
   const s = String(raw).replace(',', '.');
@@ -27,6 +23,94 @@ function parseNumber(raw){
   const n = Number(m[0]);
   return Number.isFinite(n) ? n : undefined;
 }
+function nOrDash(v, d=0){ const n = parseNumber(v); return Number.isFinite(n) ? n.toFixed(d) : '-'; }
+function isNum(v){ return Number.isFinite(parseNumber(v)); }
+function pick(obj, keys){ for (const k of keys){ const val = obj?.[k]; if (val != null && String(val).trim() !== '') return val; } return undefined; }
+function baseLineOptions(){ return { responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:false } } }; }
+
+// ---------- normalização p/ fuzzy ----------
+function norm(s){
+  return String(s || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .toLowerCase().trim();
+}
+
+// ---------- varredura profunda para “respostas” ----------
+function collectAnswerLikePairs(root, maxDepth=4){
+  const bag = {};
+  const seen = new WeakSet();
+  function walk(obj, depth){
+    if (!obj || typeof obj !== 'object' || seen.has(obj) || depth > maxDepth) return;
+    seen.add(obj);
+    for (const [k,v] of Object.entries(obj)){
+      if (/^(__|id$|nome$|treinos$|avaliacoes$|email$|contato$|cidade$)/i.test(k)) continue;
+      if (v != null && (typeof v === 'string' || typeof v === 'number')){
+        if (/[a-zA-Z]/.test(k)) if (!(k in bag)) bag[k] = v;
+      } else if (v && typeof v === 'object'){
+        walk(v, depth+1);
+      }
+    }
+  }
+  walk(root, 0);
+  return bag;
+}
+
+// ---------- unificar respostas (FR1/FR2 + scan profundo) ----------
+function mergedAnswers(cliente){
+  const pools = [];
+  if (cliente?._answers)  pools.push(cliente._answers);
+  if (cliente?._answers2) pools.push(cliente._answers2);
+  if (cliente?.answers2)  pools.push(cliente.answers2);
+  if (cliente?.forms && typeof cliente.forms === 'object'){
+    for (const [k,v] of Object.entries(cliente.forms)){
+      if (v && typeof v === 'object' && /(form|responses|fr)\s*2/i.test(k)) pools.push(v);
+    }
+  }
+  pools.push(collectAnswerLikePairs(cliente));
+  return Object.assign({}, ...pools);
+}
+function pickFuzzyFromObject(obj, regexList){
+  if (!obj || typeof obj !== 'object') return undefined;
+  for (const [k,v] of Object.entries(obj)){
+    const nk = norm(k);
+    for (const rx of regexList){
+      if (rx.test(nk) && v != null && String(v).trim() !== '') return v;
+    }
+  }
+  return undefined;
+}
+function pickFuzzyFromAnswers(cliente, regexList){
+  const pool = mergedAnswers(cliente);
+  for (const [k,v] of Object.entries(pool)){
+    const nk = norm(k);
+    for (const rx of regexList){
+      if (rx.test(nk) && v != null && String(v).trim() !== '') return v;
+    }
+  }
+  return undefined;
+}
+
+// ---------- helpers numéricos com prioridade p/ AVALIAÇÃO ----------
+function pickNumericPreferAval(aval, cliente, exactKeys = [], fuzzyPatterns = []) {
+  for (const k of exactKeys) {
+    const v = aval?.[k];
+    if (v != null && String(v).trim() !== '' && Number.isFinite(parseNumber(v))) return v;
+  }
+  const fvA = pickFuzzyFromObject(aval, fuzzyPatterns);
+  if (fvA != null && Number.isFinite(parseNumber(fvA))) return fvA;
+
+  const pool = mergedAnswers(cliente);
+  for (const k of exactKeys) {
+    const v = pool?.[k];
+    if (v != null && String(v).trim() !== '' && Number.isFinite(parseNumber(v))) return v;
+  }
+  const fvR = pickFuzzyFromAnswers(cliente, fuzzyPatterns);
+  if (fvR != null && Number.isFinite(parseNumber(fvR))) return fvR;
+
+  return undefined;
+}
+
+// -------- parsing de medidas --------
 function parseLengthCm(raw){
   if (raw == null) return undefined;
   let s = String(raw).trim().toLowerCase().replace(',', '.');
@@ -41,22 +125,22 @@ function parseLengthCm(raw){
   return val <= 3 ? val * 100 : val;
 }
 
-// buscar altura/pescoço em avaliação ou respostas
+// buscar altura/pescoço com a mesma robustez da view
 function getAlturaFrom(cliente, aval){
-  const direct = parseLengthCm(aval?.altura);
-  if (Number.isFinite(direct)) return direct;
-  const ans = cliente?._answers || {};
-  const cand = ans['altura'] ?? ans['Altura'] ?? ans['Altura (cm)'] ?? ans['altura_cm']
-            ?? ans['Altura (m)'] ?? ans['altura_m'] ?? ans['estatura'] ?? ans['Estatura (cm)'];
-  return parseLengthCm(cand);
+  const raw = pickNumericPreferAval(
+    aval, cliente,
+    ['altura','Altura','Altura (cm)','altura_cm','Altura (m)','altura_m','estatura','Estatura (cm)'],
+    [/^altura(\s|\(|$)/, /estatura/, /altura.*(cm|m)/]
+  );
+  return parseLengthCm(raw);
 }
 function getPescocoFrom(cliente, aval){
-  const direct = parseLengthCm(aval?.pescoco ?? aval?.pescoço);
-  if (Number.isFinite(direct)) return direct;
-  const ans = cliente?._answers || {};
-  const cand = ans['pescoco'] ?? ans['Pescoço'] ?? ans['Pescoço (cm)']
-            ?? ans['pescoco_cm'] ?? ans['circ_pescoco'] ?? ans['Circunferência do Pescoço'];
-  return parseLengthCm(cand);
+  const raw = pickNumericPreferAval(
+    aval, cliente,
+    ['pescoco','pescoço','Pescoço','Pescoço (cm)','pescoco_cm','circ_pescoco','Circunferência do Pescoço'],
+    [/pescoc/, /circ.*pescoc/]
+  );
+  return parseLengthCm(raw);
 }
 
 // RCQ direto
@@ -80,6 +164,17 @@ function navyBodyFatFemaleFromCm({ cintura_cm, quadril_cm, pescoco_cm, altura_cm
   if (wi + hi - ni <= 0 || hti <= 0) return undefined;
   const bf = 163.205*Math.log10(wi + hi - ni) - 97.684*Math.log10(hti) - 78.387;
   return Number.isFinite(bf) ? bf : undefined;
+}
+
+// ---------- helpers de timing p/ Chart ----------
+function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+async function waitForChart(maxTries=30){
+  for (let i=0;i<maxTries;i++){
+    if (window.Chart && typeof window.Chart === 'function') return true;
+    await sleep(120);
+  }
+  console.warn('Chart.js não ficou disponível a tempo no relatório.');
+  return false;
 }
 
 export const RelatorioView = {
@@ -119,8 +214,12 @@ export const RelatorioView = {
       RELATORIO_LOGO_PNG = mod.RELATORIO_LOGO_PNG || RELATORIO_LOGO_PNG;
     } catch (_) {}
 
-    // métricas
-    const pesoVal    = pick(ultimaAval, ["peso", "Peso (kg)", "peso_kg"]);
+    // métricas (com mesma robustez da view)
+    const pesoVal = pickNumericPreferAval(
+      ultimaAval, c,
+      ['peso','Peso','Peso (kg)','peso (kg)','peso_kg','Qual é o seu peso?'],
+      [/^peso(\s|\(|$)/, /peso.*kg/, /^kg$/]
+    );
     const cinturaVal = pick(ultimaAval, ["cintura", "Cintura (cm)", "cintura_cm"]);
     const quadrilVal = pick(ultimaAval, ["quadril", "Quadril (cm)", "quadril_cm"]);
     const abdomeVal  = pick(ultimaAval, ["abdomen","abdome","abdomem","abdominal","abdomen_cm","abdome_cm","Abdome (cm)","Abdomen (cm)"]);
@@ -171,7 +270,7 @@ export const RelatorioView = {
         .table th, .table td{padding:8px 10px}
         .avoid-break{page-break-inside:avoid}
         .explain{opacity:.85;font-size:.92rem}
-        .chart-card canvas{max-height:220px}
+        .chart-card canvas{max-height:220px;width:100% !important;height:220px !important;display:block}
         @media print{ .r-actions{display:none !important} body{background:#fff} .r-wrap{padding:0} .r-card{background:#fff} }
         .row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
       </style>
@@ -232,18 +331,18 @@ export const RelatorioView = {
           </div>
         </div>
 
-        <!-- Gráficos (peso, RCQ, RCE, %G) — mantidos como no teu arquivo -->
+        <!-- Gráficos -->
         <div class="r-card chart-card avoid-break" style="margin-top:14px">
           <h3 style="margin-top:0">Evolução do Peso</h3>
           <div id="pesoEmpty" class="muted" style="display:none">Sem dados de peso suficientes.</div>
-          <canvas id="chartPeso" height="180"></canvas>
+          <canvas id="chartPeso" height="180" style="width:100%;height:220px;display:block"></canvas>
         </div>
 
         <div class="r-card chart-card avoid-break" style="margin-top:14px">
           <div class="row"><h3 style="margin:0">RCQ (Relação Cintura/Quadril)</h3>
             <div class="explain"><b>O que é:</b> cintura ÷ quadril. <b>Alvo (mulheres):</b> ≲ 0,85.</div></div>
           <div id="rcqEmpty" class="muted" style="display:none">Sem dados de RCQ suficientes.</div>
-          <canvas id="chartRCQ" height="180"></canvas>
+          <canvas id="chartRCQ" height="180" style="width:100%;height:220px;display:block"></canvas>
         </div>
 
         <div class="r-card chart-card avoid-break" style="margin-top:14px">
@@ -251,14 +350,14 @@ export const RelatorioView = {
             <div class="explain"><b>Regra de bolso:</b> manter &lt; 0,50.</div></div>
           <div id="rceNote" class="muted" style="display:none;margin-bottom:6px"></div>
           <div id="rceEmpty" class="muted" style="display:none">Sem dados de RCE suficientes.</div>
-          <canvas id="chartRCE" height="180"></canvas>
+          <canvas id="chartRCE" height="180" style="width:100%;height:220px;display:block"></canvas>
         </div>
 
         <div class="r-card chart-card avoid-break" style="margin-top:14px">
           <div class="row"><h3 style="margin:0">% Gordura Corporal (Marinha)</h3>
             <div class="explain">Usa o valor reportado ou a estimativa (altura, pescoço, cintura, quadril).</div></div>
           <div id="bfEmpty" class="muted" style="display:none">Sem dados de %G suficientes.</div>
-          <canvas id="chartBF" height="180"></canvas>
+          <canvas id="chartBF" height="180" style="width:100%;height:220px;display:block"></canvas>
         </div>
 
         <div class="r-card avoid-break" style="margin-top:14px">
@@ -304,13 +403,25 @@ export const RelatorioView = {
       catch{ prompt('Copie o link do relatório:', url); }
     });
 
-    if (typeof window.Chart !== 'function') return;
+    // aguarda Chart.js
+    const ok = await waitForChart();
+    if (!ok) return;
+
     const c = Store.byId(id);
     if (!c) return;
 
-    // PESO
+    // PESO — mesmo critério da view
     const seriePeso = (c.avaliacoes || [])
-      .filter(a => isNum(a.peso))
+      .map(a => {
+        const p = pickNumericPreferAval(
+          a, c,
+          ['peso','Peso','Peso (kg)','peso (kg)','peso_kg','Qual é o seu peso?'],
+          [/^peso(\s|\(|$)/, /peso.*kg/, /^kg$/]
+        );
+        const pn = parseNumber(p);
+        return { ...a, pesoNum: Number.isFinite(pn) ? pn : undefined };
+      })
+      .filter(a => Number.isFinite(a.pesoNum))
       .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
     const pesoCtx = document.getElementById('chartPeso');
     const pesoEmpty = document.getElementById('pesoEmpty');
@@ -318,16 +429,17 @@ export const RelatorioView = {
     if (pesoCtx && seriePeso.length >= 1){
       pesoChart = new Chart(pesoCtx, {
         type:'line',
-        data:{ labels: seriePeso.map(a=>a.data||''), datasets:[{ label:'Peso (kg)', data: seriePeso.map(a=>parseNumber(a.peso)), tension:.35, borderWidth:3, borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,0.18)', fill:true, pointRadius:4, pointHoverRadius:6 }]},
+        data:{ labels: seriePeso.map(a=>a.data||''), datasets:[{ label:'Peso (kg)', data: seriePeso.map(a=>a.pesoNum), tension:.35, borderWidth:3, borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,0.18)', fill:true, pointRadius:4, pointHoverRadius:6 }]},
         options: baseLineOptions()
       });
+      setTimeout(()=>{ try{ pesoChart && pesoChart.resize(); }catch{} }, 0);
       pesoEmpty.style.display='none';
     } else if (pesoEmpty){ pesoEmpty.style.display='block'; }
 
     // RCQ
     const serieRCQ = (c.avaliacoes || [])
       .map(a => ({ ...a, rcq: calcRCQ(a) }))
-      .filter(a => isNum(a.rcq))
+      .filter(a => Number.isFinite(a.rcq))
       .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
     const rcqCtx = document.getElementById('chartRCQ');
     const rcqEmpty = document.getElementById('rcqEmpty');
@@ -337,18 +449,19 @@ export const RelatorioView = {
       rcqChart = new Chart(rcqCtx, {
         type:'line',
         data:{ labels, datasets:[
-          { label:'RCQ', data: serieRCQ.map(a=>parseNumber(a.rcq)), tension:.35, borderWidth:3, borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,.18)', fill:true, pointRadius:4, pointHoverRadius:6 },
+          { label:'RCQ', data: serieRCQ.map(a=>a.rcq), tension:.35, borderWidth:3, borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,.18)', fill:true, pointRadius:4, pointHoverRadius:6 },
           { label:'Guia ~0,85 (mulheres)', data: labels.map(()=>0.85), borderWidth:1, borderColor:'#888', pointRadius:0, fill:false, borderDash:[6,4], tension:0 }
         ]},
         options: baseLineOptions()
       });
+      setTimeout(()=>{ try{ rcqChart && rcqChart.resize(); }catch{} }, 0);
       rcqEmpty.style.display='none';
     } else if (rcqEmpty){ rcqEmpty.style.display='block'; }
 
     // RCE (com fallback)
     const serieRCE = (c.avaliacoes || [])
       .map(a => ({ ...a, rce: calcRCEWithFallback(c, a) }))
-      .filter(a => isNum(a.rce))
+      .filter(a => Number.isFinite(a.rce))
       .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
     const rceCtx = document.getElementById('chartRCE');
     const rceEmpty = document.getElementById('rceEmpty');
@@ -359,11 +472,12 @@ export const RelatorioView = {
       rceChart = new Chart(rceCtx, {
         type:'line',
         data:{ labels, datasets:[
-          { label:'RCE', data: serieRCE.map(a=>parseNumber(a.rce)), tension:.35, borderWidth:3, borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,.18)', fill:true, pointRadius:4, pointHoverRadius:6 },
+          { label:'RCE', data: serieRCE.map(a=>a.rce), tension:.35, borderWidth:3, borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,.18)', fill:true, pointRadius:4, pointHoverRadius:6 },
           { label:'Guia 0,50', data: labels.map(()=>0.50), borderWidth:1, borderColor:'#888', pointRadius:0, fill:false, borderDash:[6,4], tension:0 }
         ]},
         options: { ...baseLineOptions(), scales:{ y:{ beginAtZero:false, suggestedMin:0.35, suggestedMax:0.8 } } }
       });
+      setTimeout(()=>{ try{ rceChart && rceChart.resize(); }catch{} }, 0);
       rceEmpty.style.display='none';
     } else {
       if (rceEmpty) rceEmpty.style.display='block';
@@ -395,8 +509,17 @@ export const RelatorioView = {
         data:{ labels, datasets:[{ label:'%G', data: serieBF.map(a=>parseNumber(a.bodyfat)), tension:.35, borderWidth:3, borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,.18)', fill:true, pointRadius:4, pointHoverRadius:6 }]},
         options: baseLineOptions()
       });
+      setTimeout(()=>{ try{ bfChart && bfChart.resize(); }catch{} }, 0);
       bfEmpty.style.display='none';
     } else if (bfEmpty){ bfEmpty.style.display='block'; }
+
+    // Reagir a mudanças de viewport
+    window.addEventListener('resize', ()=>{
+      try{ pesoChart && pesoChart.resize(); }catch{}
+      try{ rcqChart  && rcqChart.resize(); }catch{}
+      try{ rceChart  && rceChart.resize(); }catch{}
+      try{ bfChart   && bfChart.resize(); }catch{}
+    }, { passive:true });
   }
 };
 
