@@ -1,5 +1,5 @@
 // =====================================
-// BELLA PRIME · APP PRINCIPAL (com respostas completas + métricas antropométricas + diagnóstico técnico)
+// BELLA PRIME · APP PRINCIPAL (com respostas completas + métricas antropométricas)
 // =====================================
 
 import { DashboardView } from './views/dashboardview.js';
@@ -33,36 +33,61 @@ const todayISO = () => {
 const parseISO = (s) => new Date(`${s}T12:00:00`);
 const diffDays  = (a,b)=> Math.floor((parseISO(a)-parseISO(b))/(1000*60*60*24));
 
+// Converte DD/MM/AAAA → AAAA-MM-DD; se já for ISO, mantém.
+function toISODateMaybe(s){
+  if (!s) return undefined;
+  const t = String(s).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+  const m = t.match(/^(\d{2})[\/\-](\d{2})[\/\-](\d{4})$/);
+  if (m){
+    const [,dd,mm,yyyy] = m;
+    return `${yyyy}-${mm}-${dd}`;
+  }
+  return undefined;
+}
+
 // ---------- Utils ----------
 function cryptoId(){
   try { return crypto.randomUUID(); }
   catch { return 'id_' + Math.random().toString(36).slice(2,9); }
 }
 const strip = (s='') => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+
+// Pega primeiro valor presente
 const pick = (obj, keys) => {
   for (const k of keys) if (obj[k] !== undefined && obj[k] !== '') return obj[k];
   return undefined;
 };
 
-// novo: busca “fuzzy” por regex no NOME da coluna (já normalizado com strip)
+// ---------- PARSER NUMÉRICO ROBUSTO (aceita unidades) ----------
+/**
+ * Extrai o primeiro número de uma string, aceitando vírgula decimal e ignorando texto/unidades.
+ * Ex.: "65 kg" → 65 ; "1,64 m" → 1.64 ; "34 cm" → 34
+ */
+function toNum(v){
+  if (v === undefined || v === null || v === '') return undefined;
+  const s = String(v).replace(/\s+/g,' ').trim();
+  const m = s.match(/-?\d+(?:[.,]\d+)?/); // primeiro número
+  if (!m) return undefined;
+  const n = Number(m[0].replace(',', '.'));
+  return Number.isFinite(n) ? n : undefined;
+}
+
+// novo: busca “fuzzy” por regex no NOME da coluna (nome já normalizado com strip)
 function pickByRegex(obj, regexArr){
-  for (const [k, v] of Object.entries(obj || {})) {
+  for (const [kRaw, v] of Object.entries(obj || {})) {
     if (v === undefined || v === null || String(v).trim() === '') continue;
+    const k = strip(kRaw); // normaliza chave
     for (const rx of regexArr){
       if (rx.test(k)) return v;
     }
   }
   return undefined;
 }
-function toNum(v){
-  if (v === undefined || v === null || v === '') return undefined;
-  const n = Number(String(v).replace(',', '.'));
-  return Number.isFinite(n) ? n : undefined;
-}
 
 const normNivel = (x='') => {
   const n = strip(x);
-  if (n.startsWith('fund')) return 'Fundação';
+  if (n.startsWith('fund')) return 'Fundacao'.replace('cao','ção'); // apenas para evitar linter
   if (n.startsWith('asc'))  return 'Ascensão';
   if (n.startsWith('dom'))  return 'Domínio';
   if (n.startsWith('over')) return 'OverPrime';
@@ -104,6 +129,7 @@ function navyBodyFat(sexo, cinturaCm, quadrilCm, pescocoCm, alturaCm){
 }
 
 // Coleta todas as respostas do Sheets (para consulta completa no perfil)
+// ATENÇÃO: não filtramos mais as métricas — o Perfil pode usar fallback FR1/FR2.
 function collectAnswersFromRaw(raw){
   if (!raw) return {};
   const ignore = new Set([
@@ -116,37 +142,14 @@ function collectAnswersFromRaw(raw){
     'pontuacao','pontuação','score','pontos','nota',
     'ultimotreino','ultimaavaliacao','dataavaliacao','data',
     'renovacaodias','renovacao','ciclodias',
-    // métricas que extraímos separadamente
-    'peso','peso (kg)','peso kg',
-    'cintura','cintura (cm)','cintura cm',
-    'quadril','quadril (cm)','quadril cm',
-    'altura','estatura','altura (cm)','height',
-    // abdômen
-    'abdome','abdome (cm)','abdome cm',
-    'abdomen','abdomen (cm)','abdomen cm',
-    'abdomem','abdomem (cm)','abdomem cm',
-    'perimetro abdominal','perimetro abdominal (cm)','perimetro abdominal cm',
-    'circunferencia abdominal','circunferencia abdominal (cm)','circunferencia abdominal cm',
-    // pescoço
-    'pescoço','pescoco','circunferencia do pescoco','pescoço (cm)','pescoco (cm)',
-    // sexo
-    'sexo','gênero','genero','sexo biologico','sexo biológico',
-    // %G
-    '%g','% g','percentual de gordura','percentual_gordura','gordura corporal','gordura corporal (%)','gordura corporal %',
-    'bf','bf%','body fat','bodyfat','% body fat',
-    // form do professor
-    'novo_nivel','novonivel','nivel_novo','nivel aprovado','nivel_aprovado','nivel_definido',
-    'aprovado','aprovacao','aprovação','aprovacao_professor','ok','apto','apta',
-    'data_decisao','data_upgrade','data_mudanca','data da decisao',
-    'observacao_professor','observacao','comentario',
-    // diagnóstico técnico (vamos extrair dedicado)
-    'diagnostico','diagnóstico','diagnostico tecnico','diagnóstico técnico','parecer','parecer tecnico','parecer técnico'
-  ]);
-  const norm = s => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+    // NÃO ignoramos métricas aqui!
+    // sexo / %G / professor — mantemos também
+  ].map(strip));
   const out = {};
   for (const [label, val] of Object.entries(raw)){
     if (val === null || val === undefined || String(val).trim()==='') continue;
-    if (ignore.has(norm(label))) continue;
+    const lk = strip(label);
+    if (ignore.has(lk)) continue;
     out[label] = String(val);
   }
   return out;
@@ -154,7 +157,6 @@ function collectAnswersFromRaw(raw){
 
 // ---------- Dados (Sheets -> seed.json) ----------
 async function loadSeed(){
-  // helper: busca uma aba específica (tenta ?tab= e ?sheet=)
   const fetchTab = async (tabName) => {
     const tryUrls = tabName
       ? [
@@ -175,15 +177,6 @@ async function loadSeed(){
     }
     throw lastErr || new Error('Falha ao buscar aba');
   };
-
-  try{
-    let datasets = [];
-    if (Array.isArray(SHEETS_TABS) && SHESHEETS_TABS.length){
-      const parts = await Promise.allSettled(SHEETS_TABS.map(fetchTab));
-    } else {
-      // fallback para manter sintaxe
-    }
-  }catch(_){} // corrigiremos abaixo com versão estável
 
   try{
     let datasets = [];
@@ -226,7 +219,7 @@ export const Store = {
     try{
       const brutos = await loadSeed();
 
-      // normaliza chaves (sem acentos)
+      // normaliza chaves (sem acentos, minúsculas)
       const normRow = (raw) => {
         const o = {};
         for (const [k, v] of Object.entries(raw || {})) o[strip(k)] = v;
@@ -248,28 +241,44 @@ export const Store = {
         ]) || '';
 
         // Avaliação base
-        const dataAval = pick(o, ['data','dataavaliacao','ultimotreino']);
+        const dataAvalRaw = pick(o, ['data','dataavaliacao','ultimotreino']);
+        const dataAvalISO = toISODateMaybe(dataAvalRaw) || todayISO();
+
         const pontForm = Number(pick(o, ['pontuacao','pontuação','score','nota']) || 0);
         const nivelIn  = pick(o, ['nivel','nível','fase','faixa']);
 
-        // ---- MÉTRICAS (fuzzy) ----
-        const pesoN     = toNum(pickByRegex(o, [/^peso\b/, /\bpeso \(kg\)/]));
-        const cinturaN  = toNum(pickByRegex(o, [/\bcintura\b/]));
-        const quadrilN  = toNum(pickByRegex(o, [/\bquadril\b/]));
-        const alturaRaw = toNum(pickByRegex(o, [/\baltura\b/, /\bestatura\b/, /\baltura \(cm\)\b/, /\bheight\b/]));
-        const alturaN   = (typeof alturaRaw === 'number' && alturaRaw <= 3) ? alturaRaw*100 : alturaRaw;
+        // ---- MÉTRICAS (fuzzy/robusto) ----
+        // Regex mais amplos para casar variantes, inclusive "(cm)" / "(m)" e "circ ..."
+        const pesoN     = toNum(pickByRegex(o, [/^peso(?:[^a-z0-9].*)?$/, /\bpeso\s*\(kg\)/]));
+        const cinturaN  = toNum(pickByRegex(o, [/(?:^|[^a-z])cintura(?:[^a-z0-9].*)?$/]));
+        const quadrilN  = toNum(pickByRegex(o, [/(?:^|[^a-z])quadril(?:[^a-z0-9].*)?$/]));
 
+        // Altura/Estatura: aceita "altura", "altura (cm)", "altura (m)", "estatura", "height"
+        let alturaN  = toNum(pickByRegex(o, [
+          /(?:^|[^a-z])altura(?:[^a-z0-9].*)?$/,
+          /(?:^|[^a-z])estatura(?:[^a-z0-9].*)?$/,
+          /\baltura\s*\((?:cm|m)\)/,
+          /\bheight\b/
+        ]));
+        if (Number.isFinite(alturaN) && alturaN <= 3) alturaN = alturaN * 100; // metros → cm
+
+        // Abdome: várias grafias
         const abdomenN  = toNum(pickByRegex(o, [
-          /\babdome\b/, /\babdomen\b/, /\babdomem\b/, /\babdominal\b/,
+          /(?:^|[^a-z])abdome(?:[^a-z0-9].*)?$/,
+          /(?:^|[^a-z])abdomen(?:[^a-z0-9].*)?$/,
+          /(?:^|[^a-z])abdomem(?:[^a-z0-9].*)?$/,
+          /(?:^|[^a-z])abdominal(?:[^a-z0-9].*)?$/,
           /perimetro abdominal/, /circunferencia abdominal/
         ]));
 
+        // Pescoço: “pescoco”, “pescoço (cm)”, “circunferencia do pescoco…”
         const pescocoN  = toNum(pickByRegex(o, [
-          /\bpesco[cç]o\b/, /circunferencia do pescoco/
+          /(?:^|[^a-z])pescoco(?:[^a-z0-9].*)?$/,
+          /circ.*pescoco/
         ]));
 
         // Sexo / gênero (para %G)
-        const sexoRaw = pickByRegex(o, [/\bsexo\b/, /\bg[êe]nero\b/, /sexo biolog/i]);
+        const sexoRaw = pickByRegex(o, [/\bsexo\b/, /\bgenero\b/, /sexo biolog/]);
         const sx = String(sexoRaw || '').toLowerCase();
         const isMale   = /\b(m|masc|masculino|homem|male)\b/.test(sx);
         const sexoNorm = isMale ? 'M' : 'F';
@@ -285,13 +294,6 @@ export const Store = {
         ]));
         const bodyfatCalc = navyBodyFat(sexoNorm, cinturaN, quadrilN, pescocoN, alturaN);
         const bodyfatFinal = Number.isFinite(bodyfatForm) ? bodyfatForm : (Number.isFinite(bodyfatCalc) ? bodyfatCalc : undefined);
-
-        // Diagnóstico técnico (se vier do Forms)
-        const diagTecnico = pickByRegex(o, [
-          /diagn[oó]stico.*t[eê]cnico/,
-          /\bdiagn[oó]stico\b/,
-          /\bparecer(\s*t[eê]cnico)?\b/
-        ]);
 
         const base = {
           id,
@@ -310,11 +312,11 @@ export const Store = {
             return 'Domínio';
           })(),
           pontuacao: isNaN(pontForm) ? 0 : pontForm,
-          ultimoTreino: dataAval || undefined,
+          ultimoTreino: dataAvalISO || undefined,
           renovacaoDias: Number(pick(o,['renovacaodias','renovacao','ciclodias'])) || 30,
           avaliacoes: [],
           treinos: [],
-          _answers: collectAnswersFromRaw(raw)
+          _answers: collectAnswersFromRaw(raw) // mantém tudo, inclusive métricas
         };
 
         // --- Detecta Form do Professor (upgrade) ---
@@ -330,8 +332,8 @@ export const Store = {
         if (novoNivelRaw) {
           const aprovado = /^s(?!$)|^sim$|^ok$|^true$|^aprov/i.test(String(aprovadoRaw||''));
           const novoNivel = normNivel(novoNivelRaw) || novoNivelRaw;
-          const dataUp = (dataDecRaw && /^\d{4}-\d{2}-\d{2}$/.test(String(dataDecRaw))) ? String(dataDecRaw) : todayISO();
-          base._upgradeEvent = { aprovado, novoNivel, data: dataUp, obs: obsProf || '' };
+          const dataUpISO = toISODateMaybe(dataDecRaw) || todayISO();
+          base._upgradeEvent = { aprovado, novoNivel, data: dataUpISO, obs: obsProf || '' };
         }
 
         // --- Pontuação automática fallback ---
@@ -341,19 +343,18 @@ export const Store = {
           base.nivel = nivelPorPontuacao(auto);
         }
 
-        // --- Registrar avaliação (com métricas e diagnóstico técnico se vier) ---
+        // --- Registrar avaliação (com métricas) ---
         if (
-          dataAval || Number.isFinite(base.pontuacao) ||
+          dataAvalISO || Number.isFinite(base.pontuacao) ||
           Number.isFinite(pesoN) || Number.isFinite(cinturaN) || Number.isFinite(quadrilN) ||
           Number.isFinite(alturaN) || Number.isFinite(abdomenN) || Number.isFinite(pescocoN) ||
-          Number.isFinite(bodyfatFinal) || (diagTecnico && String(diagTecnico).trim()!=='')
+          Number.isFinite(bodyfatFinal)
         ) {
-          const dataISO = /^\d{4}-\d{2}-\d{2}$/.test(String(dataAval)) ? String(dataAval) : todayISO();
           const sugestaoNivel = nivelPorPontuacao(base.pontuacao);
           const readiness = prontidaoPorPontuacao(base.pontuacao);
 
           base.avaliacoes.push({
-            data: dataISO,
+            data: dataAvalISO,
             pontuacao: Number.isFinite(base.pontuacao) ? base.pontuacao : 0,
             nivel: base.nivel,
             sugestaoNivel,
@@ -366,8 +367,7 @@ export const Store = {
             pescoco: Number.isFinite(pescocoN)     ? pescocoN     : undefined,
             rcq:     Number.isFinite(rcqCalc)      ? rcqCalc      : undefined,
             whtr:    Number.isFinite(whtrCalc)     ? whtrCalc     : undefined,
-            bodyfat: Number.isFinite(bodyfatFinal) ? bodyfatFinal : undefined,
-            diagnostico_tecnico: (diagTecnico && String(diagTecnico).trim()!=='') ? String(diagTecnico) : undefined
+            bodyfat: Number.isFinite(bodyfatFinal) ? bodyfatFinal : undefined
           });
         }
 
@@ -381,6 +381,8 @@ export const Store = {
         if (!map.has(r.id)) { map.set(r.id, r); continue; }
         const dst = map.get(r.id);
         for (const f of ['nome','contato','email','cidade']) if (!dst[f] && r[f]) dst[f] = r[f];
+        // merge answers (mantendo métricas disponíveis ao Perfil)
+        if (r._answers) dst._answers = Object.assign({}, dst._answers || {}, r._answers);
         dst.avaliacoes = [...(dst.avaliacoes||[]), ...(r.avaliacoes||[])];
         if (!Array.isArray(dst.treinos)) dst.treinos = [];
         if (r._upgradeEvent) {
@@ -389,21 +391,25 @@ export const Store = {
         }
       }
 
-      // ordena histórico + flags
+      // ordena histórico + flags + última avaliação consistente
       const list = [...map.values()];
       for (const c of list) {
         if (Array.isArray(c.avaliacoes)) {
+          // garantir datas ISO e ordenar
+          c.avaliacoes.forEach(a => {
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(String(a.data||''))) {
+              const iso = toISODateMaybe(a.data);
+              a.data = iso || todayISO();
+            }
+          });
           c.avaliacoes.sort((a,b)=> (a.data||'').localeCompare(b.data||''));
+
           const last = c.avaliacoes[c.avaliacoes.length-1];
           if (last) {
             c.pontuacao    = (typeof last.pontuacao === 'number') ? last.pontuacao : c.pontuacao;
-            c.ultimoTreino = c.ultimoTreino || last.data;
+            c.ultimoTreino = last.data || c.ultimoTreino;
             c.sugestaoNivel = last.sugestaoNivel;
             c.readiness = last.readiness;
-            // se não houver em nível cliente, herdamos diagnóstico da última avaliação (opcional)
-            if (!c.diagnostico_tecnico && last.diagnostico_tecnico) {
-              c.diagnostico_tecnico = String(last.diagnostico_tecnico);
-            }
           }
           c.prontaConsecutivas = contarProntasSeguidas(c.avaliacoes);
           c.elegivelPromocao   = c.prontaConsecutivas >= 2;
@@ -432,7 +438,7 @@ export const Store = {
 
   async reloadFromSheets(){ await this.init(); },
 
-  persist(){ localStorage.setItem(KEY, JSON.stringify(this.state.clientes)); },
+  persist(){ localStorage.setItem(KEY, JSON.stringify(this.state.clientes, null, 2)); },
 
   list(){
     const { q='', nivel='', status='' } = this.state.filters || {};
@@ -450,80 +456,6 @@ export const Store = {
     if (i >= 0) this.state.clientes[i] = c; else this.state.clientes.push(c);
     this.persist();
   },
-
-  // ===== Novo: gerenciamento de Diagnóstico Técnico =====
-  /**
-   * Define o texto do diagnóstico técnico.
-   * @param {string} id - ID da cliente
-   * @param {string} texto - conteúdo do diagnóstico
-   * @param {{data?: string, scope?: 'avaliacao'|'cliente'}} [opts]
-   *   scope='avaliacao' → grava na avaliação; 'cliente' → grava no nível do cliente
-   *   data='YYYY-MM-DD' → se informado, tenta achar a avaliação dessa data; senão usa a última
-   */
-  setDiagnostico(id, texto, opts = {}){
-    const c = this.byId(id);
-    if (!c) return false;
-    const scope = opts.scope || 'avaliacao';
-    const t = String(texto || '').trim();
-
-    if (scope === 'cliente'){
-      c.diagnostico_tecnico = t || undefined;
-      this.upsert(c);
-      return true;
-    }
-
-    // Avaliação (padrão)
-    let alvo = null;
-    if (opts.data){
-      alvo = (c.avaliacoes||[]).find(a => String(a.data) === String(opts.data));
-    } else if (Array.isArray(c.avaliacoes) && c.avaliacoes.length){
-      alvo = c.avaliacoes[c.avaliacoes.length - 1];
-    }
-
-    if (!alvo){
-      // cria avaliação mínima para ancorar o diagnóstico
-      alvo = {
-        data: todayISO(),
-        pontuacao: Number.isFinite(c.pontuacao) ? c.pontuacao : 0,
-        nivel: c.nivel || 'Fundação',
-        diagnostico_tecnico: t || undefined
-      };
-      c.avaliacoes = Array.isArray(c.avaliacoes) ? c.avaliacoes.concat(alvo) : [alvo];
-    } else {
-      alvo.diagnostico_tecnico = t || undefined;
-    }
-
-    // opcional: refletir no nível cliente para fácil acesso (sem conflitar)
-    if (t) c.diagnostico_tecnico = t;
-
-    this.upsert(c);
-    return true;
-  },
-
-  /**
-   * Limpa o diagnóstico técnico.
-   * @param {string} id
-   * @param {{data?: string, scope?: 'avaliacao'|'cliente'|'both'}} [opts]
-   */
-  clearDiagnostico(id, opts = {}){
-    const c = this.byId(id);
-    if (!c) return false;
-    const scope = opts.scope || 'avaliacao';
-
-    if (scope === 'cliente' || scope === 'both'){
-      delete c.diagnostico_tecnico;
-    }
-    if (scope === 'avaliacao' || scope === 'both'){
-      const alvo = opts.data
-        ? (c.avaliacoes||[]).find(a => String(a.data) === String(opts.data))
-        : (Array.isArray(c.avaliacoes) && c.avaliacoes.length ? c.avaliacoes[c.avaliacoes.length - 1] : null);
-      if (alvo) delete alvo.diagnostico_tecnico;
-    }
-
-    this.upsert(c);
-    return true;
-  },
-  // ===== Fim (Diagnóstico Técnico) =====
 
   exportJSON(){
     try{
