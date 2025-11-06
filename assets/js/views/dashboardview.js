@@ -1,669 +1,743 @@
-// =====================================
-// BELLA PRIME · APP PRINCIPAL (com respostas completas + métricas antropométricas)
-// =====================================
+// ================================
+// VIEW: Dashboard
+// ================================
+import { Store, statusCalc } from '../app.js';
 
-import { DashboardView } from './views/dashboardview.js';
-import { ClienteView }   from './views/clienteview.js';
-import { AvaliacaoView } from './views/avaliacaoview.js';
-import { TreinoView }    from './views/treinoview.js';
-import { RelatorioView } from './views/relatorioview.js';
+let chartRef = null; // barras (níveis)
 
-// ---------- Config gerais ----------
-const SHEETS_API = 'https://script.google.com/macros/s/AKfycbyTQxy-R22hFvEtLrBPf70qFuouXBPNCNZP87StBK_fNvIjQlvmB2Dy77pooPECwekr/exec';
-
-// Se o seu Apps Script aceita ?tab=<nome_da_aba>, declare aqui as abas a ler.
-// Mantém compatível: se alguma aba não existir, ignora e segue.
-const SHEETS_TABS = [
-  'avaliacao',
-  'reavaliacao',
-  'professor'
-];
-
-// Branding (lido pelo RelatorioView via import dinâmico)
-export const BRAND_NAME = 'Marcio Dowglas Treinador';
-export const RELATORIO_LOGO_PNG = './assets/img/logo-mdpersonal.png';
-
-// Form do Professor (pré-preenchido)
-export const PROFESSOR_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLScvQBCSEVdTspYgelGI0zWbrK21ttO1IUKuf9_j5rO_a2czfA/viewform?usp=header';
-
-// ---------- Datas ----------
-const todayISO = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-};
-const parseISO = (s) => new Date(`${s}T12:00:00`);
-const diffDays  = (a,b)=> Math.floor((parseISO(a)-parseISO(b))/(1000*60*60*24));
-
-// ---------- Utils ----------
-function cryptoId(){
-  try { return crypto.randomUUID(); }
-  catch { return 'id_' + Math.random().toString(36).slice(2,9); }
-}
-const strip = (s='') => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
-const pick = (obj, keys) => {
-  for (const k of keys) if (obj[k] !== undefined && obj[k] !== '') return obj[k];
-  return undefined;
-};
-
-// novo: busca “fuzzy” por regex no NOME da coluna (já normalizado com strip)
-function pickByRegex(obj, regexArr){
-  for (const [k, v] of Object.entries(obj || {})) {
-    if (v === undefined || v === null || String(v).trim() === '') continue;
-    for (const rx of regexArr){
-      if (rx.test(k)) return v;
-    }
+// ---------------- PARAMS (baseados no TreinoView) ----------------
+const PARAMS = {
+  'Fundação': {
+    series: '3',
+    reps: '12–15',
+    descanso: '45–75s',
+    intensidade1RM: '50–65%',
+    cadencia: '2:1–2:2',
+    metodos: 'pirâmide truncada (±5%), circuito leve, isometria leve (2s)',
+    intensidades: ['≈50–65% (nível de base)'], // fixa
+    cardio: [
+      { tipo: 'LISS', duracao_min: 25, FCR: '60–65%', instrucao: 'Ritmo contínuo, conversa possível.' },
+      { tipo: 'MISS (opcional)', duracao_min: 15, FCR: '65–70%', instrucao: 'Ritmo sustentado, fala entrecortada.' }
+    ]
+  },
+  'Ascensão': {
+    series: '3',
+    reps: '10–14 (ajuste progressivo)',
+    descanso: '60–90s',
+    intensidade1RM: '65–75%',
+    cadencia: '2:1–2:2',
+    metodos: 'pirâmide, bi-set leve, drop simples, isometria (conforme meso)',
+    intensidades: ['≈65–75% (estável; sem periodização)'], // fixa
+    cardio: [
+      { tipo: 'LISS', duracao_min: 30, FCR: '60–65%', instrucao: 'Ritmo contínuo.' },
+      { tipo: 'MISS', duracao_min: 20, FCR: '65–75%', instrucao: 'Ritmo sustentado.' }
+    ]
+  },
+  'Domínio': {
+    series: '4–5',
+    reps: '8–12 (conforme foco)',
+    descanso: '60–120s',
+    intensidade1RM: '70–85%',
+    cadencia: '2:1–2:2 / 3:1 em tensional',
+    metodos: 'pirâmide crescente, bi-set/supersérie, drop, rest-pause, isometria (conforme meso)',
+    intensidades: [
+      'M1 · Volume Técnico (≈70%)',
+      'M2 · Densidade Tensional (≈75%)',
+      'M3 · Potência Controlada (≈80–85%)',
+      'M4 · Densidade Avançada (≈75%)',
+      'M5 · Lapidação Estética (≈80%)',
+      'M6 · Resistência sob Fadiga (≈80–85%)'
+    ],
+    cardio: [
+      { tipo: 'MISS', duracao_min: 20, FCR: '65–75%', instrucao: 'Ritmo sustentado.' }
+    ],
+    extra: [
+      'Distribuição temporal (respeite o foco/intensidade desta fase).',
+      '- Organize em blocos semanais coerentes.',
+      '- Indique no topo de cada sessão a qual foco/mesociclo pertence.'
+    ]
+  },
+  'OverPrime': {
+    series: '4–6',
+    reps: '6–12 (conforme foco)',
+    descanso: '60–150s',
+    intensidade1RM: '75–90%',
+    cadencia: 'variável (inclui cluster/pausas)',
+    metodos: 'pirâmide inversa, rest-pause duplo, cluster, tri/giant set, parciais (conforme meso)',
+    intensidades: [
+      'O1 · Força Base Avançada (≈80%)',
+      'O2 · Densidade de Força (≈85%)',
+      'O3 · Potência & Tensão (≈85–90%)',
+      'O4 · Lapidação & Condicionamento (≈75–80%)',
+      'O5 · Pico Estético/Força Relativa (≈80–85%)',
+      'O6 · Densidade Final (≈80–90%)'
+    ],
+    cardio: [
+      { tipo: 'MISS', duracao_min: 20, FCR: '70–80%', instrucao: 'Ritmo desafiador.' }
+    ],
+    extra: [
+      'Distribuição temporal (respeite o foco/intensidade desta fase).',
+      '- Organize em blocos semanais coerentes.',
+      '- Indique no topo de cada sessão a qual foco/mesociclo pertence.'
+    ]
   }
-  return undefined;
-}
-function toNum(v){
-  if (v === undefined || v === null || v === '') return undefined;
-  const n = Number(String(v).replace(',', '.'));
-  return Number.isFinite(n) ? n : undefined;
-}
-
-const normNivel = (x='') => {
-  const n = strip(x);
-  if (n.startsWith('fund')) return 'Fundação';
-  if (n.startsWith('asc'))  return 'Ascensão';
-  if (n.startsWith('dom'))  return 'Domínio';
-  if (n.startsWith('over')) return 'OverPrime';
-  return '';
 };
 
-// ---------- % Gordura (Marinha EUA) ----------
-function cmToIn(cm){ return Number.isFinite(cm) ? (cm / 2.54) : undefined; }
-function log10(x){ return Math.log(x) / Math.LN10; }
+// Programações exigidas por nível
+const PROGRAMS_BY_LEVEL = {
+  'Fundação': ['ABC', 'ABCD'],
+  'Ascensão': ['ABC', 'ABCD'],
+  'Domínio':  ['ABC', 'ABCD', 'ABCDE'],
+  'OverPrime':['ABC', 'ABCD', 'ABCDE', 'ABCDEF']
+};
 
-/**
- * Calcula %G Marinha EUA.
- * @param {'F'|'M'} sexo - 'F' feminino, 'M' masculino
- * @param {number} cinturaCm
- * @param {number} quadrilCm - obrigatório para mulheres
- * @param {number} pescocoCm
- * @param {number} alturaCm
- * @returns {number|undefined} bodyfat em %, com 1 casa (ex.: 27.3)
- */
-function navyBodyFat(sexo, cinturaCm, quadrilCm, pescocoCm, alturaCm){
-  const C = cmToIn(cinturaCm);
-  const H = cmToIn(alturaCm);
-  const N = cmToIn(pescocoCm);
-  const Q = cmToIn(quadrilCm);
-  if (!Number.isFinite(C) || !Number.isFinite(H) || !Number.isFinite(N)) return undefined;
+const PERIODIZED_LEVELS = new Set(['Domínio', 'OverPrime']);
 
-  if (sexo === 'M'){
-    const diff = C - N;
-    if (diff <= 0) return undefined;
-    const bf = 86.010 * log10(diff) - 70.041 * log10(H) + 36.76;
-    return Number.isFinite(bf) ? Number(Math.max(0, bf).toFixed(1)) : undefined;
-  } else {
-    // feminino: precisa de quadril
-    if (!Number.isFinite(Q)) return undefined;
-    const sum = C + Q - N;
-    if (sum <= 0) return undefined;
-    const bf = 163.205 * log10(sum) - 97.684 * log10(H) - 78.387;
-    return Number.isFinite(bf) ? Number(Math.max(0, bf).toFixed(1)) : undefined;
-  }
+function cardioLines(level) {
+  const arr = PARAMS[level]?.cardio || [];
+  if (!arr.length) return '';
+  return arr.map(c => `• ${c.tipo} — ${c.duracao_min}min · ${c.FCR} · ${c.instrucao}`).join('\n');
 }
 
-// Coleta todas as respostas do Sheets (para consulta completa no perfil)
-function collectAnswersFromRaw(raw){
-  if (!raw) return {};
-  const ignore = new Set([
-    'id','identificador','uid','usuario',
-    'nome','nome completo','seu nome','qual e o seu nome','qual seu nome','aluna','cliente','paciente',
-    'contato','whatsapp','whats','telefone',
-    'email','e-mail','mail',
-    'cidade-estado','cidade - estado','cidade/estado','cidade_estado','cidade-uf','cidade uf','cidadeuf','cidade',
-    'nivel','nível','nivelatual','fase','faixa',
-    'pontuacao','pontuação','score','pontos','nota',
-    'ultimotreino','ultimaavaliacao','dataavaliacao','data',
-    'renovacaodias','renovacao','ciclodias',
-    // métricas que extraímos separadamente
-    'peso','peso (kg)','peso kg',
-    'cintura','cintura (cm)','cintura cm',
-    'quadril','quadril (cm)','quadril cm',
-    'altura','estatura','altura (cm)','height',
-    // abdômen (todas as variações comuns para não cair em _answers)
-    'abdome','abdome (cm)','abdome cm',
-    'abdomen','abdomen (cm)','abdomen cm',
-    'abdomem','abdomem (cm)','abdomem cm',
-    'perimetro abdominal','perimetro abdominal (cm)','perimetro abdominal cm',
-    'circunferencia abdominal','circunferencia abdominal (cm)','circunferencia abdominal cm',
-    // pescoço (para %G)
-    'pescoço','pescoco','circunferencia do pescoco','pescoço (cm)','pescoco (cm)',
-    // sexo/gênero (para %G)
-    'sexo','gênero','genero','sexo biologico','sexo biológico',
-    // %G (vindo do Forms) — novos aliases para não irem ao _answers
-    '%g','% g','percentual de gordura','percentual_gordura','gordura corporal','gordura corporal (%)','gordura corporal %',
-    'bf','bf%','body fat','bodyfat','% body fat',
-    // form do professor
-    'novo_nivel','novonivel','nivel_novo','nivel aprovado','nivel_aprovado','nivel_definido',
-    'aprovado','aprovacao','aprovação','aprovacao_professor','ok','apto','apta',
-    'data_decisao','data_upgrade','data_mudanca','data da decisao',
-    'observacao_professor','observacao','comentario'
-  ]);
-  const norm = s => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
-  const out = {};
-  for (const [label, val] of Object.entries(raw)){
-    if (val === null || val === undefined || String(val).trim()==='') continue;
-    if (ignore.has(norm(label))) continue;
-    out[label] = String(val);
+function buildPromptTemplate({ level, program, intensityLabel }) {
+  const p = PARAMS[level] || PARAMS['Fundação'];
+  const periodized = PERIODIZED_LEVELS.has(level);
+
+  const linhas = [
+    'Você é prescritor do sistema Bella Prime · Evo360.',
+    'Gere um PROGRAMA DE TREINO estruturado seguindo as regras do nível.',
+    '',
+    `Cliente: {{CLIENTE_NOME}} | Nível: ${level}`,
+    `Programa: ${program}`,
+    `Período: {{DATA_INICIO}} → {{DATA_VENCIMENTO}}`,
+    periodized
+      ? `Foco/intensidade desta fase: ${intensityLabel}`
+      : `Intensidade alvo: ${p.intensidades?.[0] || p.intensidade1RM}`,
+    '{{OBJETIVO}}',
+    '{{RESTRICOES}}',
+    '{{OBSERVACOES}}',
+    '',
+    'Parâmetros do nível:',
+    `- Séries: ${p.series}`,
+    `- Repetições: ${p.reps}`,
+    `- Descanso: ${p.descanso}`,
+    `- %1RM: ${p.intensidade1RM}`,
+    `- Cadência: ${p.cadencia}`,
+    `- Métodos aplicáveis: ${p.metodos}`,
+    '',
+    'Estrutura obrigatória por sessão:',
+    '- Mobilidade (3 itens do grupo do dia).',
+    '- Principais (6–8 exercícios, ordem sugerida: 1 multiarticular principal, 2 secundário, 3 acessório composto, 4 isolador primário, 5 isolador secundário, 6 método aplicado, 7 core técnico opcional).',
+    '',
+    'Cardio (Karvonen — FCR = (FCmax − FCrep) × %intensidade + FCrep). Modelos:',
+    cardioLines(level),
+    '',
+    'Formato de saída:',
+    '- Sessões A, B, C… (parâmetros completos: séries, reps, descanso, cadência).',
+    '- Cardio no final com tipo, duração, %FCR e instrução prática.',
+    '- Incluir observações do método quando aplicável (NUNCA explicar o gesto motor).'
+  ];
+
+  if (periodized && p.extra?.length) {
+    linhas.push('', ...p.extra);
   }
-  return out;
+  return linhas.filter(Boolean).join('\n');
 }
 
-// ---------- Dados (Sheets -> seed.json) ----------
-async function loadSeed(){
-  // helper: busca uma aba específica (ou base sem tab)
-  const fetchTab = async (tabName) => {
-    const url = tabName ? `${SHEETS_API}?tab=${encodeURIComponent(tabName)}` : SHEETS_API;
-    const r = await fetch(url, { cache:'no-store' });
-    if (!r.ok) throw new Error(`Sheets HTTP ${r.status} (${tabName||'base'})`);
-    const data = await r.json();
-    if (!Array.isArray(data)) throw new Error(`Formato inválido em ${tabName||'base'}`);
-    // anota a origem (não impacta views)
-    return data.map(row => ({ __tab: tabName || 'base', ...row }));
-  };
+function buildUniversalTemplate() {
+  return [
+    'Você é prescritor do sistema Bella Prime · Evo360.',
+    'Gere um PROGRAMA DE TREINO estruturado.',
+    '',
+    'Cliente: {{CLIENTE_NOME}} | Nível: {{NIVEL}}',
+    'Programa: {{PROGRAMA}}',
+    'Período: {{DATA_INICIO}} → {{DATA_VENCIMENTO}}',
+    'Intensidade: {{INTENSIDADE}}',
+    '{{OBJETIVO}}',
+    '{{RESTRICOES}}',
+    '{{OBSERVACOES}}',
+    '',
+    'Parâmetros:',
+    '- Séries: {{SERIES}}',
+    '- Repetições: {{REPETICOES}}',
+    '- Descanso: {{DESCANSO}}',
+    '- %1RM: {{PERCENT_1RM}}',
+    '- Cadência: {{CADENCIA}}',
+    '- Métodos: {{METODOS}}',
+    '',
+    'Estrutura por sessão: Mobilidade → Principais (6–8) → Core (opcional).',
+    'Cardio (Karvonen): Tipo {{CARDIO_TIPO}}, {{CARDIO_MIN}}min, FCR {{CARDIO_FCR}}.',
+    '',
+    'Se Domínio/OverPrime: respeite foco/meso desta fase.'
+  ].join('\n');
+}
 
-  try{
-    let datasets = [];
-    // tenta por abas; se der erro geral, cai no catch/seed
-    if (Array.isArray(SHEETS_TABS) && SHEETS_TABS.length){
-      const parts = await Promise.allSettled(SHEETS_TABS.map(fetchTab));
-      for (const p of parts){
-        if (p.status === 'fulfilled') datasets = datasets.concat(p.value);
-        else console.warn('Aba falhou (ignorada):', p.reason?.message || p.reason);
-      }
-      // fallback: se todas as abas falharam, tenta a base sem tab
-      if (datasets.length === 0){
-        console.warn('Nenhuma aba retornou dados. Tentando base sem ?tab=');
-        datasets = await fetchTab(null);
+// Gera a lista bruta de prompts (para depois filtrar no modal)
+function buildAllPromptRecords(){
+  const records = [];
+
+  // Universal (opcional)
+  records.push({
+    key: 'universal',
+    level: '—',
+    program: '—',
+    intensity: '—',
+    title: 'Template Universal',
+    text: buildUniversalTemplate()
+  });
+
+  for (const level of ['Fundação','Ascensão','Domínio','OverPrime']){
+    const programs = PROGRAMS_BY_LEVEL[level] || [];
+    const periodized = PERIODIZED_LEVELS.has(level);
+    const intens = PARAMS[level]?.intensidades || [];
+
+    if (!periodized) {
+      // intensidade fixa -> um card por programa
+      for (const program of programs){
+        records.push({
+          key: `${level}_${program}`,
+          level, program,
+          intensity: intens[0] || PARAMS[level].intensidade1RM,
+          title: `${level} — ${program}`,
+          text: buildPromptTemplate({ level, program, intensityLabel: intens[0] || PARAMS[level].intensidade1RM })
+        });
       }
     } else {
-      // não há abas definidas: usa base
-      datasets = await fetchTab(null);
+      // periodizado -> um card por intensidade para cada programa
+      for (const program of programs){
+        for (const intensity of intens){
+          records.push({
+            key: `${level}_${program}_${intensity}`.replace(/\s+/g,'_'),
+            level, program, intensity,
+            title: `${level} — ${program} — ${intensity}`,
+            text: buildPromptTemplate({ level, program, intensityLabel: intensity })
+          });
+        }
+      }
     }
-
-    console.log('Sheets OK (linhas totais):', datasets.length);
-    return datasets;
-  }catch(e){
-    console.warn('Sheets falhou, usando seed.json:', e);
-    const r2 = await fetch('./assets/data/seed.json', { cache:'no-store' });
-    const data = await r2.json();
-    console.log('seed.json:', Array.isArray(data) ? data.length : 0);
-    return data;
   }
+
+  return records;
 }
 
-// ---------- Store ----------
-const KEY = 'bp_clientes_v1';
+// ---------------- /PARAMS ----------------
 
-export const Store = {
-  state: {
-    clientes: [],
-    filters: { q:'', nivel:'', status:'' },
-    scroll: { '/': 0 }
+export const DashboardView = {
+  async template(){
+    const k = kpi(Store.state.clientes);
+
+    // CSS dos modais
+    const modalCSS = `
+      <style>
+        .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:9998}
+        .modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:9999}
+        .modal.show,.modal-backdrop.show{display:flex}
+        .modal-card{width:min(1080px,92vw);max-height:86vh;overflow:auto;background:#121316;border:1px solid var(--border);
+          border-radius:14px;box-shadow:var(--shadow);padding:14px}
+        .modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+        .modal-grid{display:grid;grid-template-columns:1fr;gap:10px}
+        .msg-item,.prompt-item{border:1px solid var(--border);border-radius:12px;padding:10px;background:rgba(255,255,255,.02)}
+        .msg-actions,.prompt-actions{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+        .msg-title,.prompt-title{font-weight:700;margin:0 0 6px}
+        .msg-text,.prompt-text{white-space:pre-wrap}
+        .pill{display:inline-block;padding:3px 8px;border-radius:999px;border:1px solid var(--border);font-size:.8rem;opacity:.9;margin-right:6px}
+        .muted{opacity:.85}
+        .filters{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 12px}
+        @media(min-width:960px){ .modal-grid{grid-template-columns:1fr 1fr} }
+      </style>
+    `;
+
+    return `
+      ${modalCSS}
+
+      <section class="row">
+        <div class="kpi"><h4>Total</h4><div class="num">${k.total}</div></div>
+        <div class="kpi"><h4>Fundação</h4><div class="num">${k.fundacao}</div></div>
+        <div class="kpi"><h4>Ascensão</h4><div class="num">${k.ascensao}</div></div>
+        <div class="kpi"><h4>Domínio</h4><div class="num">${k.dominio}</div></div>
+        <div class="kpi"><h4>OverPrime</h4><div class="num">${k.over}</div></div>
+      </section>
+
+      <section class="card controls">
+        <input class="input" id="q" placeholder="Buscar por nome..." />
+        <select id="nivel" class="input">
+          <option value="">Todos níveis</option>
+          <option>Fundação</option><option>Ascensão</option><option>Domínio</option><option>OverPrime</option>
+        </select>
+        <select id="status" class="input">
+          <option value="">Todos status</option>
+          <option>Ativa</option><option>Perto de vencer</option><option>Vence em breve</option><option>Vencida</option>
+        </select>
+        <span style="flex:1"></span>
+        <button class="btn btn-outline" id="syncBtn">Atualizar (Google)</button>
+        <button class="btn btn-outline" id="importBtn">Importar</button>
+        <input type="file" id="file" style="display:none" accept="application/json" />
+        <button class="btn btn-primary" id="exportBtn">Exportar JSON</button>
+
+        <button class="btn btn-outline" id="copyCsvBtn" title="Gerar CSV e copiar">Copiar CSV</button>
+        <button class="btn btn-outline" id="copyJsonLinesBtn" title="Gerar JSON Lines e copiar">Copiar JSONL</button>
+
+        <button class="btn btn-outline" id="openMsgBtn">💬 Mensagens rápidas</button>
+        <button class="btn btn-outline" id="openPromptBtn">🧠 Prompts de Treino</button>
+      </section>
+
+      <section class="card chart-card">
+        <canvas id="chartNiveis" height="140"></canvas>
+      </section>
+
+      <section class="card">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Nome</th>
+              <th>Nível</th>
+              <th>Vencimento</th>
+              <th>Status</th>
+              <th style="width:220px;text-align:right;">Ações</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+        <div id="empty" style="display:none;padding:12px;color:#aaa">Sem clientes para exibir.</div>
+      </section>
+
+      <!-- Modal de Mensagens Rápidas -->
+      <div class="modal-backdrop" id="msgBackdrop"></div>
+      <div class="modal" id="msgModal">
+        <div class="modal-card">
+          <div class="modal-header">
+            <h3 style="margin:0">💬 Modelos de Mensagens</h3>
+            <button class="btn btn-outline" id="msgCloseBtn">Fechar</button>
+          </div>
+          <div class="modal-grid">
+            ${msgTemplate(1, 'Boas-vindas + Avaliação + Blog')}
+            ${msgTemplate(2, 'Boas-vindas + eBook Bella Prime (permite enviar?)')}
+            ${msgTemplate(3, 'Pós-formulário — Solicitar 3 fotos')}
+            ${msgTemplate(4, 'Follow-up — Relembrar envio das fotos')}
+            ${msgTemplate(5, 'Oferta leve — “Posso te enviar o eBook Bella Prime?”')}
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal de Prompts de Treino -->
+      <div class="modal-backdrop" id="promptBackdrop"></div>
+      <div class="modal" id="promptModal">
+        <div class="modal-card">
+          <div class="modal-header">
+            <h3 style="margin:0">🧠 Prompts de Elaboração de Treino</h3>
+            <button class="btn btn-outline" id="promptCloseBtn">Fechar</button>
+          </div>
+
+          <!-- Filtros -->
+          <div class="filters">
+            <select id="fNivel" class="input" style="min-width:160px">
+              <option value="">Todos os níveis</option>
+              <option>Fundação</option>
+              <option>Ascensão</option>
+              <option>Domínio</option>
+              <option>OverPrime</option>
+            </select>
+            <select id="fProg" class="input" style="min-width:140px">
+              <option value="">Todos os programas</option>
+              <option>ABC</option>
+              <option>ABCD</option>
+              <option>ABCDE</option>
+              <option>ABCDEF</option>
+            </select>
+          </div>
+
+          <p class="muted" style="margin:0 0 8px">
+            Templates com placeholders (ex.: {{CLIENTE_NOME}}, {{DATA_INICIO}}, {{DATA_VENCIMENTO}}).
+          </p>
+          <div class="modal-grid" id="promptGrid"></div>
+        </div>
+      </div>
+    `;
   },
 
   async init(){
-    try{
-      const brutos = await loadSeed();
+    const $ = s => document.querySelector(s);
 
-      // normaliza chaves (sem acentos)
-      const normRow = (raw) => {
-        const o = {};
-        for (const [k, v] of Object.entries(raw || {})) o[strip(k)] = v;
-        return o;
-      };
+    // filtros – estado inicial
+    $('#q').value = Store.state.filters.q || '';
+    $('#nivel').value = Store.state.filters.nivel || '';
+    $('#status').value = Store.state.filters.status || '';
 
-      const registros = (brutos || []).map(raw => {
-        const o = normRow(raw);
+    const renderTable = () => {
+      const list = Store.list();
+      const body = document.getElementById('tbody');
+      const empty = document.getElementById('empty');
 
-        // Identificação
-        const nome = pick(o, ['nome','nome completo','seu nome','qual e o seu nome','qual seu nome','aluna','cliente']);
-        const contato = pick(o, ['contato','whatsapp','telefone']);
-        const email   = pick(o, ['email','e-mail','mail']);
-        const id      = String(pick(o, ['id','uid','usuario']) || contato || email || cryptoId());
+      if(list.length === 0){
+        body.innerHTML = '';
+        empty.style.display = 'block';
+      } else {
+        empty.style.display = 'none';
+        body.innerHTML = list.map(rowHTML).join('');
+      }
 
-        // Cidade/Estado
-        const cidade = pick(o, [
-          'cidade-estado','cidade - estado','cidade/estado','cidade uf','cidadeuf','cidade'
-        ]) || '';
-
-        // Avaliação base (data/nivel/pontuacao)
-        const dataAval = pick(o, ['data','dataavaliacao','ultimotreino']);
-        const pontForm = Number(pick(o, ['pontuacao','pontuação','score','nota']) || 0);
-        const nivelIn  = pick(o, ['nivel','nível','fase','faixa']);
-
-        // ---- MÉTRICAS (fuzzy) ----
-        const pesoN     = toNum(pickByRegex(o, [/^peso\b/, /\bpeso \(kg\)/]));
-        const cinturaN  = toNum(pickByRegex(o, [/\bcintura\b/]));
-        const quadrilN  = toNum(pickByRegex(o, [/\bquadril\b/]));
-        const alturaRaw = toNum(pickByRegex(o, [/\baltura\b/, /\bestatura\b/, /\baltura \(cm\)\b/, /\bheight\b/]));
-        // altura em cm; se vier em metros (<=3), converte pra cm
-        const alturaN   = (typeof alturaRaw === 'number' && alturaRaw <= 3) ? alturaRaw*100 : alturaRaw;
-
-        // Abdômen (todas as formas comuns)
-        const abdomenN  = toNum(pickByRegex(o, [
-          /\babdome\b/, /\babdomen\b/, /\babdomem\b/, /\babdominal\b/,
-          /perimetro abdominal/, /circunferencia abdominal/
-        ]));
-
-        // Pescoço (para %G)
-        const pescocoN  = toNum(pickByRegex(o, [
-          /\bpesco[cç]o\b/, /circunferencia do pescoco/
-        ]));
-
-        // Sexo / gênero (para %G)
-        const sexoRaw = pickByRegex(o, [/\bsexo\b/, /\bg[êe]nero\b/, /sexo biolog/i]);
-        const sx = String(sexoRaw || '').toLowerCase();
-        const isMale   = /\b(m|masc|masculino|homem|male)\b/.test(sx);
-        const isFemale = /\b(f|fem|feminino|mulher|female)\b/.test(sx);
-        const sexoNorm = isMale ? 'M' : 'F'; // padrão feminino se indefinido
-
-        // RCQ / WHtR
-        const rcqCalc   = (Number.isFinite(cinturaN) && Number.isFinite(quadrilN) && quadrilN !== 0) ? (cinturaN / quadrilN) : undefined;
-        const whtrCalc  = (Number.isFinite(cinturaN) && Number.isFinite(alturaN)  && alturaN  !== 0) ? (cinturaN / alturaN)  : undefined;
-
-        // %G do Forms (direto), com fallback no cálculo da Marinha EUA  —— PATCH
-        const bodyfatForm = toNum(pickByRegex(o, [
-          /^%?\s*g$/,                       // "%G" ou "g"
-          /\bpercentual.*gordura\b/,        // "percentual de gordura"
-          /\bgordura.*corporal\b/,          // "gordura corporal"
-          /\bbf%?\b/,                       // "BF" ou "BF%"
-          /\bbody\s*fat\b/,                 // "body fat"
-          /\bbodyfat\b/                     // "bodyfat"
-        ]));
-        const bodyfatCalc = navyBodyFat(sexoNorm, cinturaN, quadrilN, pescocoN, alturaN);
-        const bodyfatFinal = Number.isFinite(bodyfatForm) ? bodyfatForm : (Number.isFinite(bodyfatCalc) ? bodyfatCalc : undefined);
-
-        // nível default
-        const nivelDefault = (() => {
-          const n = strip(nivelIn || '');
-          if (n.startsWith('fund')) return 'Fundação';
-          if (n.startsWith('asc'))  return 'Ascensão';
-          if (n.startsWith('dom'))  return 'Domínio';
-          if (n.startsWith('over')) return 'OverPrime';
-          if (pontForm <= 2)  return 'Fundação';
-          if (pontForm <= 6)  return 'Ascensão';
-          return 'Domínio';
-        })();
-
-        const base = {
-          id,
-          nome: nome || '(Sem nome)',
-          contato: contato || '',
-          email: email || '',
-          cidade,
-          nivel: nivelDefault,
-          pontuacao: isNaN(pontForm) ? 0 : pontForm,
-          ultimoTreino: dataAval || undefined,
-          renovacaoDias: Number(pick(o,['renovacaodias','renovacao','ciclodias'])) || 30,
-          avaliacoes: [],
-          treinos: [],
-          _answers: collectAnswersFromRaw(raw)
-        };
-
-        // --- Detecta Form do Professor (upgrade) ---
-        const novoNivelRaw = pick(o, [
-          'novo_nivel','novonivel','nivel_novo','nivel aprovado','nivel_aprovado','nivel_definido'
-        ]);
-        const aprovadoRaw = pick(o, [
-          'aprovado','aprovacao','aprovação','aprovacao_professor','ok','apto','apta'
-        ]);
-        const dataDecRaw  = pick(o, ['data_decisao','data_upgrade','data_mudanca','data da decisao']);
-        const obsProf     = pick(o, ['observacao_professor','observacao','comentario']);
-
-        if (novoNivelRaw) {
-          const aprovado = /^s(?!$)|^sim$|^ok$|^true$|^aprov/i.test(String(aprovadoRaw||''));
-          const novoNivel = normNivel(novoNivelRaw) || novoNivelRaw;
-          const dataUp = (dataDecRaw && /^\d{4}-\d{2}-\d{2}$/.test(String(dataDecRaw))) ? String(dataDecRaw) : todayISO();
-          base._upgradeEvent = { aprovado, novoNivel, data: dataUp, obs: obsProf || '' };
-        }
-
-        // --- Pontuação automática por respostas (fallback) ---
-        if ((!pontForm || isNaN(pontForm)) && base._answers && Object.keys(base._answers).length){
-          const auto = calcularPontuacao(base._answers);
-          base.pontuacao = auto;
-          base.nivel = nivelPorPontuacao(auto);
-        }
-
-        // --- Registrar avaliação (com métricas) ---
-        if (dataAval || Number.isFinite(base.pontuacao) || Number.isFinite(pesoN) || Number.isFinite(cinturaN) || Number.isFinite(quadrilN) || Number.isFinite(alturaN) || Number.isFinite(abdomenN) || Number.isFinite(pescocoN) || Number.isFinite(bodyfatFinal)) {
-          const dataISO = /^\d{4}-\d{2}-\d{2}$/.test(String(dataAval)) ? String(dataAval) : todayISO();
-          const sugestaoNivel = nivelPorPontuacao(base.pontuacao);
-          const readiness = prontidaoPorPontuacao(base.pontuacao);
-
-          base.avaliacoes.push({
-            data: dataISO,
-            pontuacao: Number.isFinite(base.pontuacao) ? base.pontuacao : 0,
-            nivel: base.nivel,
-            sugestaoNivel,
-            readiness,
-            peso:    Number.isFinite(pesoN)        ? pesoN        : undefined,
-            cintura: Number.isFinite(cinturaN)     ? cinturaN     : undefined,
-            quadril: Number.isFinite(quadrilN)     ? quadrilN     : undefined,
-            altura:  Number.isFinite(alturaN)      ? alturaN      : undefined,   // cm
-            abdomen: Number.isFinite(abdomenN)     ? abdomenN     : undefined,   // cm
-            pescoco: Number.isFinite(pescocoN)     ? pescocoN     : undefined,   // cm
-            rcq:     Number.isFinite(rcqCalc)      ? rcqCalc      : undefined,
-            whtr:    Number.isFinite(whtrCalc)     ? whtrCalc     : undefined,
-            bodyfat: Number.isFinite(bodyfatFinal) ? bodyfatFinal : undefined    // %G (Forms > cálculo)
-          });
-        }
-
-        // marca de origem (debug/inspeção; não usada em views)
-        if (raw && raw.__tab) base.__tab = raw.__tab;
-
-        return base;
+      body.querySelectorAll('a[data-id]').forEach(a => {
+        a.addEventListener('click', e => {
+          e.preventDefault();
+          location.hash = `#/cliente/${a.dataset.id}`;
+        });
       });
 
-      // colapsa por id (mantém histórico)
-      const map = new Map();
-      for (const r of registros) {
-        if (!map.has(r.id)) { map.set(r.id, r); continue; }
-        const dst = map.get(r.id);
-        for (const f of ['nome','contato','email','cidade']) if (!dst[f] && r[f]) dst[f] = r[f];
-        dst.avaliacoes = [...(dst.avaliacoes||[]), ...(r.avaliacoes||[])];
-        if (!Array.isArray(dst.treinos)) dst.treinos = [];
-        if (r._upgradeEvent) {
-          if (!Array.isArray(dst._allUpgrades)) dst._allUpgrades = [];
-          dst._allUpgrades.push(r._upgradeEvent);
-        }
-      }
-
-      // ordena histórico + flags
-      const list = [...map.values()];
-      for (const c of list) {
-        if (Array.isArray(c.avaliacoes)) {
-          c.avaliacoes.sort((a,b)=> (a.data||'').localeCompare(b.data||''));
-          const last = c.avaliacoes[c.avaliacoes.length-1];
-          if (last) {
-            c.pontuacao    = (typeof last.pontuacao === 'number') ? last.pontuacao : c.pontuacao;
-            c.ultimoTreino = c.ultimoTreino || last.data;
-            c.sugestaoNivel = last.sugestaoNivel;
-            c.readiness = last.readiness;
+      body.querySelectorAll('.btn-del').forEach(btn => {
+        btn.addEventListener('click', e => {
+          const id = e.currentTarget.dataset.id;
+          const nome = e.currentTarget.dataset.nome;
+          if (confirm(`Deseja realmente excluir ${nome}?`)) {
+            Store.state.clientes = Store.state.clientes.filter(c => String(c.id) !== String(id));
+            Store.persist();
+            chartNiveis();
+            renderTable();
           }
-          c.prontaConsecutivas = contarProntasSeguidas(c.avaliacoes);
-          c.elegivelPromocao   = c.prontaConsecutivas >= 2;
-        }
+        });
+      });
+    };
 
-        // aplica último upgrade aprovado
-        const ups = (c._allUpgrades || []).filter(u => u && u.aprovado);
-        if (ups.length){
-          ups.sort((a,b)=> (a.data||'').localeCompare(b.data||''));
-          const lastUp = ups[ups.length-1];
-          if (lastUp.novoNivel){
-            c.nivel = normNivel(lastUp.novoNivel) || lastUp.novoNivel;
-            c.upgradeEm  = lastUp.data;
-            c.upgradeObs = lastUp.obs || '';
-          }
-        }
+    const debounce = (fn, ms=200)=>{ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms);} };
+    $('#q').addEventListener('input', debounce(e => { Store.state.filters.q = e.target.value; renderTable(); }));
+    $('#nivel').addEventListener('change', e => { Store.state.filters.nivel = e.target.value; renderTable(); });
+    $('#status').addEventListener('change', e => { Store.state.filters.status = e.target.value; renderTable(); });
+
+    document.getElementById('exportBtn').addEventListener('click', () => Store.exportJSON?.());
+    document.getElementById('importBtn').addEventListener('click', () => document.getElementById('file').click());
+    document.getElementById('file').addEventListener('change', async (e) => {
+      const f = e.target.files[0]; if (!f) return;
+      await Store.importJSON?.(f);
+      chartNiveis();
+      renderTable();
+      e.target.value = '';
+    });
+
+    document.getElementById('syncBtn').addEventListener('click', async ()=>{
+      const btn = document.getElementById('syncBtn');
+      const old = btn.textContent;
+      btn.disabled = true; btn.textContent = 'Atualizando...';
+      try{
+        await Store.reloadFromSheets();
+        Store.state.filters = { q:'', nivel:'', status:'' };
+        $('#q').value=''; $('#nivel').value=''; $('#status').value='';
+        chartNiveis();
+        renderTable();
+      } finally {
+        btn.disabled = false; btn.textContent = old;
       }
+    });
 
-      this.state.clientes = list;
-      this.persist();
-      console.log(`✅ Normalizado: ${this.state.clientes.length} clientes`);
-    }catch(e){
-      console.error('Falha init()', e);
-      this.state.clientes = [];
+    // Exportações rápidas
+    document.getElementById('copyCsvBtn').addEventListener('click', async ()=>{
+      const csv = formatCSVWithMetrics(Store.state.clientes);
+      await copyToClipboard(csv);
+      toast('CSV copiado para o clipboard.');
+    });
+    document.getElementById('copyJsonLinesBtn').addEventListener('click', async ()=>{
+      const jl = formatJSONLinesWithMetrics(Store.state.clientes);
+      await copyToClipboard(jl);
+      toast('JSON Lines copiado para o clipboard.');
+    });
+
+    // Render inicial
+    chartNiveis();
+    renderTable();
+
+    // ===== Modal de Mensagens =====
+    const modal = $('#msgModal'); const back = $('#msgBackdrop');
+    const openBtn = $('#openMsgBtn'); const closeBtn = $('#msgCloseBtn');
+
+    openBtn.addEventListener('click',()=>{ modal.classList.add('show'); back.classList.add('show'); });
+    closeBtn.addEventListener('click',()=>{ modal.classList.remove('show'); back.classList.remove('show'); });
+    back.addEventListener('click',()=>{ modal.classList.remove('show'); back.classList.remove('show'); });
+
+    // Mensagens rápidas
+    const BLOG = 'https://mbritodowglas-collab.github.io/mdpersonal/';
+    const AVAL = 'https://mbritodowglas-collab.github.io/mdpersonal/avaliacao';
+    const msgs = {
+      msg1: `Oi! 👋 Seja bem-vinda!\nAqui eu falo sobre *treino feminino*, *emagrecimento real* e *neurociência de hábitos*.\n\nTe envio o link da **avaliação gratuita** pra montar teu diagnóstico? 💪✨\n\nAvaliação: ${AVAL}\nBlog: ${BLOG}`,
+      msg2: `Oi! 🌹 Bem-vinda!\nTenho um material chamado **Bella Prime™** — um método que une treino, mente e hábitos.\nQuer dar uma olhada no conceito? 💫`,
+      msg3: `Oi 👋\nRecebi teu formulário e preciso só de 3 fotos (frente, costas e de lado) pra montar o diagnóstico.\nTop e short ou legging preta, boa luz e postura natural.\nSe preferir, te envio a imagem-guia. 📸`,
+      msg4: `Oi! 👋\nVi que preencheu o formulário mas ainda não recebi as fotos.\nSem elas não consigo ajustar o plano. Quer que te mande o exemplo de como tirar? 📸`,
+      msg5: `Oi! 🌸 Tudo bem?\nTenho um eBook que explica como o *Tratamento Bella Prime* funciona — com treino, neurociência e mudança de hábitos.\nQuer que eu te envie pra dar uma olhada? 💪✨`
+    };
+    for (const k in msgs) {
+      const el = document.getElementById(k);
+      if (el) el.textContent = msgs[k];
     }
-  },
+    document.querySelectorAll('[data-copy]').forEach(btn=>{
+      btn.addEventListener('click',()=>{
+        const target = document.querySelector(btn.dataset.copy);
+        if (!target) return;
+        copyToClipboard(target.textContent);
+        toast('Copiado!');
+      });
+    });
+    document.querySelectorAll('[data-wa]').forEach(btn=>{
+      btn.addEventListener('click',()=>{
+        const target = document.querySelector(btn.dataset.wa);
+        if (!target) return;
+        const msg = target.textContent.trim();
+        window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`,'_blank','noopener');
+      });
+    });
 
-  async reloadFromSheets(){ await this.init(); },
+    // ===== Modal de Prompts de Treino + FILTRO =====
+    const pModal = $('#promptModal'); const pBack = $('#promptBackdrop');
+    const pOpen = $('#openPromptBtn'); const pClose = $('#promptCloseBtn');
 
-  persist(){ localStorage.setItem(KEY, JSON.stringify(this.state.clientes)); },
+    pOpen.addEventListener('click',()=>{ pModal.classList.add('show'); pBack.classList.add('show'); });
+    pClose.addEventListener('click',()=>{ pModal.classList.remove('show'); pBack.classList.remove('show'); });
+    pBack.addEventListener('click',()=>{ pModal.classList.remove('show'); pBack.classList.remove('show'); });
 
-  list(){
-    const { q='', nivel='', status='' } = this.state.filters || {};
-    return [...this.state.clientes]
-      .sort((a,b)=> (a.nome||'').localeCompare(b.nome||'','pt',{sensitivity:'base'}))
-      .filter(c => !q     || (c.nome||'').toLowerCase().includes(q.toLowerCase()))
-      .filter(c => !nivel || c.nivel === nivel)
-      .filter(c => !status|| statusCalc(c).label === status);
-  },
+    const grid = document.getElementById('promptGrid');
+    const fNivel = document.getElementById('fNivel');
+    const fProg  = document.getElementById('fProg');
 
-  byId(id){ return this.state.clientes.find(c => String(c.id) === String(id)); },
+    // pré-monta todos os prompts uma única vez
+    const PROMPT_RECORDS = buildAllPromptRecords();
 
-  upsert(c){
-    const i = this.state.clientes.findIndex(x => String(x.id) === String(c.id));
-    if (i >= 0) this.state.clientes[i] = c; else this.state.clientes.push(c);
-    this.persist();
-  },
+    function renderPromptGrid(){
+      const nivel = (fNivel?.value || '').trim();
+      const prog  = (fProg?.value  || '').trim();
 
-  // Export/Import
-  exportJSON(){
-    try{
-      const blob = new Blob([JSON.stringify(this.state.clientes, null, 2)], {type:'application/json'});
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `bella-prime-clientes-${todayISO()}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(a.href);
-    }catch(e){
-      console.error('exportJSON()', e);
-      alert('Falha ao exportar JSON.');
+      const filtered = PROMPT_RECORDS.filter(r => {
+        const okNivel = !nivel || r.level === nivel || r.level === '—';
+        const okProg  = !prog  || r.program === prog || r.program === '—';
+        // respeita a regra de existência: ABCDE só aparece em Domínio/OverPrime; ABCDEF só em OverPrime
+        if (prog && r.program === prog && r.level !== '—') {
+          const allowed = PROGRAMS_BY_LEVEL[r.level] || [];
+          if (!allowed.includes(prog)) return false;
+        }
+        return okNivel && okProg;
+      });
+
+      grid.innerHTML = filtered.map(r => {
+        const pills = [];
+        if (r.level !== '—') pills.push(r.level);
+        if (r.program !== '—') pills.push(r.program);
+        if (r.intensity && r.intensity !== '—') pills.push(r.intensity);
+        return promptCardHTML(r.key, r.title, r.text, pills);
+      }).join('');
+
+      grid.querySelectorAll('[data-copy-prompt]').forEach(btn=>{
+        btn.addEventListener('click',()=>{
+          const target = grid.querySelector(btn.dataset.copyPrompt);
+          if (!target) return;
+          copyToClipboard(target.textContent);
+          toast('Prompt copiado!');
+        });
+      });
     }
-  },
 
-  async importJSON(file){
-    try{
-      const txt = await file.text();
-      const arr = JSON.parse(txt);
-      if (!Array.isArray(arr)) throw new Error('Formato inválido (esperado array de clientes).');
-      this.state.clientes = arr;
-      this.persist();
-    }catch(e){
-      console.error('importJSON()', e);
-      alert('Falha ao importar JSON: ' + e.message);
-    }
+    fNivel?.addEventListener('change', renderPromptGrid);
+    fProg?.addEventListener('change', renderPromptGrid);
+
+    // primeira renderização do modal de prompts
+    renderPromptGrid();
   }
 };
 
-// ---------- Status ----------
-export function statusCalc(c){
-  const renov = c.renovacaoDias ?? 30;
-  const hoje  = todayISO();
-  const dias  = renov - (diffDays(hoje, c.ultimoTreino || hoje));
-  if (dias >= 10) return { label:'Ativa',           klass:'st-ok'   };
-  if (dias >= 3)  return { label:'Perto de vencer', klass:'st-warn' };
-  if (dias >= 0)  return { label:'Vence em breve',  klass:'st-soon' };
-  return            { label:'Vencida',              klass:'st-bad'  };
+// ---------- tabela ----------
+function rowHTML(c){
+  const status = statusCalc(c);
+  const klass = {
+    'Fundação': 'level-fundacao',
+    'Ascensão': 'level-ascensao',
+    'Domínio':   'level-dominio',
+    'OverPrime': 'level-overprime'
+  }[c.nivel] || 'level-fundacao';
+
+  return `
+    <tr>
+      <td>${escapeHTML(c.nome || '')}</td>
+      <td><span class="badge ${klass}">${c.nivel}</span></td>
+      <td>${c.ultimoTreino || '-'}</td>
+      <td><span class="status ${status.klass}">${status.label}</span></td>
+      <td style="text-align:right;white-space:nowrap;">
+        <div style="display:inline-flex;gap:8px;">
+          <a href="#" data-id="${c.id}" class="btn btn-outline" style="padding:4px 10px;">Ver</a>
+          <a href="#/relatorio/${c.id}" class="btn btn-outline" style="padding:4px 10px;">🧾 Relatório</a>
+          <button class="btn btn-danger btn-del" data-id="${c.id}" data-nome="${escapeHTML(c.nome || '')}" title="Excluir" style="padding:4px 10px;">🗑️</button>
+        </div>
+      </td>
+    </tr>`;
 }
 
-// ---------- Programas por nível ----------
-export function programsByLevel(nivel){
-  switch (nivel) {
-    case 'Fundação': return ['ABC','ABCD'];
-    case 'Ascensão': return ['ABC','ABCD'];
-    case 'Domínio' : return ['ABC','ABCD','ABCDE','ABCDEF'];
-    case 'OverPrime': return ['ABC','ABCD','ABCDE','ABCDEF'];
-    default: return ['ABC','ABCD'];
-  }
+// ---------- KPI e gráfico de níveis ----------
+function kpi(arr){
+  const total = arr.length;
+  const by = arr.reduce((a, c) => { a[c.nivel] = (a[c.nivel] || 0) + 1; return a; }, {});
+  return {
+    total,
+    fundacao: by['Fundação'] || 0,
+    ascensao: by['Ascensão'] || 0,
+    dominio:  by['Domínio']   || 0,
+    over:     by['OverPrime'] || 0
+  };
 }
 
-// ---------- Intensidades (Domínio/OverPrime) ----------
-const INTENSIDADES_AVANCADAS = [
-  'Base Intermediária (≈65–70%)',
-  'Densidade / Hipertrofia (≈70–75%)',
-  'Força Relativa (≈75–85%)',
-  'Lapidação / Refinamento (≈75–80%)'
-];
+function chartNiveis(){
+  const el = document.getElementById('chartNiveis');
+  if (!el) return;
+  if (chartRef) chartRef.destroy();
+  if (typeof window.Chart !== 'function') return; // fail-safe
 
-export function intensitiesByLevel(nivel){
-  if (!nivel) return null;
-  if (String(nivel).startsWith('Dom') || String(nivel).startsWith('Over')) {
-    return INTENSIDADES_AVANCADAS.slice();
-  }
-  return null;
-}
-
-// ---------- Pontuação/Nível/Prontidão ----------
-export function calcularPontuacao(respostas) {
-  if (!respostas || typeof respostas !== 'object') return 0;
-
-  const criterios = [
-    { chave: /execu[cç][aã]o|t[ée]cnica|movimento|postura/i, bom: ['boa','correta','excelente','sem dificuldade'], ruim: ['ruim','errada','muita dificuldade'], peso: 1 },
-    { chave: /frequ[êe]ncia|dias por semana|quantas vezes/i, bom: ['4','5','6','7'], ruim: ['0','1','2','nenhum','rara'], peso: 1 },
-    { chave: /dor|les[aã]o|limita[cç][aã]o|tendinite|condromalacia|condromal[áa]cia|lombar|joelho|ombro/i, bom: ['nenhuma','não','nao','controlada'], ruim: ['sim','frequente','constante'], peso: -1 },
-    { chave: /sono/i, bom: ['bom','regular','7','8','9'], ruim: ['ruim','ins[ôo]nia','5','4','3'], peso: 1 },
-    { chave: /alimenta[cç][aã]o|dieta|nutri/i, bom: ['equilibrada','organizada','planejada','acompanha'], ruim: ['desorganizada','ruim','pula','lanches'], peso: 1 },
-    { chave: /tempo de treino|treina h[aá]|experi[êe]ncia/i, bom: ['1 ano','2 anos','3 anos','mais de','> 1'], ruim: ['iniciante','come[çc]ando','< 3 meses'], peso: 1 },
-    { chave: /const[âa]ncia|disciplina|motiva[cç][aã]o/i, bom: ['alta','boa','constante'], ruim: ['baixa','oscilante'], peso: 0.5 }
-  ];
-
-  let score = 0;
-
-  for (const [pergunta, resposta] of Object.entries(respostas)) {
-    for (const c of criterios) {
-      if (c.chave.test(pergunta)) {
-        const texto = String(resposta).toLowerCase();
-        if (c.bom.some(b => texto.includes(b))) score += c.peso;
-        else if (c.ruim && c.ruim.some(r => texto.includes(r))) score -= Math.abs(c.peso);
-      }
-    }
-  }
-
-  score = Math.max(0, Math.min(9, score));
-  return score;
-}
-
-export function nivelPorPontuacao(score) {
-  if (score <= 3.5) return 'Fundação';
-  if (score <= 5.9) return 'Ascensão';
-  return 'Domínio';
-}
-
-export function prontidaoPorPontuacao(score){
-  if (score >= 6)   return 'Pronta para subir';
-  if (score >= 5.0) return 'Quase lá';
-  return 'Manter nível';
-}
-
-function contarProntasSeguidas(avals){
-  if (!Array.isArray(avals) || avals.length === 0) return 0;
-  let count = 0;
-  for (let i = avals.length - 1; i >= 0; i--){
-    if (avals[i].readiness === 'Pronta para subir') count++;
-    else break;
-  }
-  return count;
-}
-
-// ---------- Router ----------
-const idRe = '([\\w\\-+.@=]+)';
-const routes = [
-  { path: new RegExp('^#\\/$'),                             view: DashboardView },
-  { path: new RegExp('^#\\/cliente\\/' + idRe + '$'),       view: ClienteView   },
-  { path: new RegExp('^#\\/avaliacao\\/' + idRe + '$'),     view: AvaliacaoView },
-  { path: new RegExp('^#\\/treino\\/' + idRe + '\\/novo$'), view: TreinoView    },
-  { path: new RegExp('^#\\/relatorio\\/' + idRe + '$'),     view: RelatorioView },
-];
-
-async function render(){
-  const app  = document.getElementById('app');
-  const hash = location.hash;
-  let View = DashboardView, params = [];
-  if (hash && hash !== '#' && hash !== '#/'){
-    const match = routes.find(r => r.path.test(hash));
-    if (match){ params = match.path.exec(hash).slice(1); View = match.view; }
-  }
-  app.innerHTML = await View.template(...params);
-  if (View.init) await View.init(...params);
-}
-
-/* =========================
-   PATCH DE UI (CSS + tabelas mobile + zona segura nas ações)
-   ========================= */
-const BP_MOBILE_CSS = `
-:root{
-  --bg:#0c0c0e;--card:#121316;--muted:#9aa0a6;--text:#e9eaee;--border:#22252b;
-  --primary:#c62828;--primary-2:#b61f1f;--primary-3:#a31b1b;
-  --ok:#1f8f53;--warn:#c2931a;--bad:#ab2b28;--radius:14px;
-  --shadow:0 6px 24px rgba(0,0,0,.35),0 1px 0 rgba(255,255,255,.02) inset;
-}
-html,body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;font-size:15px;-webkit-tap-highlight-color:transparent;}
-.card{background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.01));border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;box-shadow:var(--shadow);backdrop-filter:saturate(1.1) blur(2px);margin-bottom:14px;}
-.input{width:100%;height:44px;border-radius:12px;padding:0 12px;border:1px solid var(--border);background:#111316;color:#e9eaee;font-size:.95rem;}
-.input:focus{outline:none;border-color:#3a3f47;box-shadow:0 0 0 2px rgba(198,40,40,.12);}
-.btn{--h:44px;min-width:44px;height:var(--h);line-height:var(--h);display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:12px;padding:0 14px;font-weight:600;letter-spacing:.2px;border:1px solid var(--border);background:#14161a;color:#e9eaee;transition:transform .08s ease,filter .12s ease,background .2s ease,border-color .2s ease;cursor:pointer;text-decoration:none;}
-.btn:hover{filter:brightness(1.08);} .btn:active{transform:translateY(1px);}
-.btn-primary{background:var(--primary);border-color:var(--primary-2);color:#fff;} .btn-primary:hover{background:var(--primary-2);} .btn-primary:active{background:var(--primary-3);}
-.btn-outline{background:transparent;} .btn-danger{background:#a32622;border-color:#8e1f1b;color:#fff;} .btn-success{background:var(--ok);border-color:#1a7b46;color:#fff;}
-.badge{display:inline-block;padding:6px 10px;border-radius:999px;font-weight:700;background:#1a1d22;border:1px solid var(--border);color:#d5d7dc;font-size:.82rem;}
-.status{padding:6px 10px;border-radius:999px;font-weight:700;}
-.st-ok{background:rgba(16,112,64,.25);color:#7ce0b3;border:1px solid rgba(16,112,64,.35);}
-.st-warn{background:rgba(197,147,26,.20);color:#ffd86b;border:1px solid rgba(197,147,26,.35);}
-.st-soon{background:rgba(197,147,26,.12);color:#ffea9a;border:1px solid rgba(197,147,26,.22);}
-.st-bad{background:rgba(171,43,40,.22);color:#ff9e9c;border:1px solid rgba(171,43,40,.32);}
-
-/* Tabelas */
-.table{width:100%;border-collapse:separate;border-spacing:0;min-width:520px;}
-.table thead th{font-weight:700;color:#cfd2d8;text-align:left;padding:10px;}
-.table tbody td{padding:10px;border-top:1px solid var(--border);}
-.table tbody tr:hover{background:rgba(255,255,255,.02);}
-.table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px;}
-
-/* Coluna de ações: zona segura */
-.td-actions{text-align:right;}
-.td-actions .btn{min-width:64px;}
-.td-actions .btn + .btn{margin-left:12px;}
-.td-actions .btn-danger{filter:saturate(1.1);}
-
-/* Mobile: tabela em “cards” */
-@media(max-width:640px){
-  .table{min-width:unset;}
-  .table thead{display:none;}
-  .table tbody tr{display:grid;grid-template-columns:1fr auto;gap:6px;padding:10px;border-top:1px solid var(--border);}
-  .table tbody td{display:flex;justify-content:space-between;align-items:center;border:none;padding:6px 0;}
-  .table tbody td::before{content:attr(data-label);color:var(--muted);font-weight:600;margin-right:12px;}
-  .td-actions{grid-column:1 / -1;justify-content:flex-end;}
-}
-
-.chart-card canvas{max-height:240px;}
-@media(max-width:640px){.chart-card canvas{max-height:200px;}}
-
-.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
-`;
-
-function ensureStylesInjected(){
-  if (document.getElementById('bp-mobile-style')) return;
-  const s = document.createElement('style');
-  s.id = 'bp-mobile-style';
-  s.textContent = BP_MOBILE_CSS;
-  document.head.appendChild(s);
-}
-
-// Cria automaticamente data-label nos <td> com base nos <th> e marca a última célula como “ações”
-function enhanceTables(){
-  document.querySelectorAll('table.table').forEach(table=>{
-    const headers = [...table.querySelectorAll('thead th')].map(th=>th.textContent.trim());
-    table.querySelectorAll('tbody tr').forEach(tr=>{
-      const cells = [...tr.children];
-      cells.forEach((td,i)=>{
-        if (!td.getAttribute('data-label')) td.setAttribute('data-label', headers[i] || '');
-        if (i === cells.length - 1) td.classList.add('td-actions');
-      });
-    });
+  const arr = Store.state.clientes;
+  chartRef = new Chart(el, {
+    type: 'bar',
+    data: {
+      labels: ['Fundação', 'Ascensão', 'Domínio', 'OverPrime'],
+      datasets: [{
+        label: 'Distribuição por Nível',
+        data: [
+          arr.filter(c => c.nivel === 'Fundação').length,
+          arr.filter(c => c.nivel === 'Ascensão').length,
+          arr.filter(c => c.nivel === 'Domínio').length,
+          arr.filter(c => c.nivel === 'OverPrime').length,
+        ],
+        borderWidth: 1
+      }]
+    },
+    options: { responsive:true, scales:{ y:{ beginAtZero:true } }, plugins:{ legend:{ display:false } } }
   });
 }
 
-// Hook no render para aplicar o patch em todas as telas
-const _origRender = render;
-render = async function(){
-  ensureStylesInjected();
-  await _origRender();
-  enhanceTables();
-};
-ensureStylesInjected();
+// ---------- utilidades ----------
+function escapeHTML(s){
+  return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+}
 
-// Eventos de rota
-window.addEventListener('hashchange', render);
+function safeCell(v){ if (v == null) return ''; return String(v).replace(/\r?\n/g,' ').replace(/"/g,'""'); }
+function pick(obj, keys){ for (const k of keys){ const v = obj?.[k]; if (v!=null && String(v).trim()!=='') return v; } return undefined; }
+const toNumFlat = v => v == null ? undefined : Number(String(v).replace(',', '.'));
+function isFiniteNum(v){ return Number.isFinite(toNumFlat(v)); }
 
-// ---------- Boot ----------
-(async () => {
-  await Store.init();
-  await render();
-})();
+function latestEval(cliente){
+  const avs = Array.isArray(cliente?.avaliacoes) ? cliente.avaliacoes.slice() : [];
+  if (avs.length === 0) return {};
+  avs.sort((a,b)=> (a.data||'').localeCompare(b.data||''));
+  const last = avs[avs.length - 1] || {};
+  const peso    = toNumFlat(pick(last, ["peso","Peso (kg)","peso_kg"]));
+  const cintura = toNumFlat(pick(last, ["cintura","Cintura (cm)","cintura_cm"]));
+  const quadril = toNumFlat(pick(last, ["quadril","Quadril (cm)","quadril_cm"]));
+  const abdome  = toNumFlat(pick(last, ["abdome","Abdome (cm)","Abdome","abdome_cm","abdomen","abdome_cm"]));
+  let   altura  = toNumFlat(pick(last, ["altura","Altura (cm)","altura_cm","Altura (m)","altura_m"]));
+  if (isFiniteNum(altura) && altura > 0 && altura <= 3) altura = altura * 100;
+  const rcq = (isFiniteNum(cintura) && isFiniteNum(quadril) && quadril) ? (cintura / quadril) : (isFiniteNum(last?.rcq) ? Number(last.rcq) : undefined);
+  const rce = (isFiniteNum(cintura) && isFiniteNum(altura) && altura) ? (cintura / altura) : (isFiniteNum(last?.whtr) ? Number(last.whtr) : undefined);
+  return { data:last.data || '', peso, cintura, quadril, abdome, altura, rcq, rce };
+}
+
+function formatCSVWithMetrics(arr){
+  if(!Array.isArray(arr)) return '';
+  const fields = [
+    'id','nome','contato','email','cidade','nivel','pontuacao','ultimoTreino','objetivo',
+    'data_avaliacao','peso','cintura','quadril','abdome','rcq','rce'
+  ];
+  const header = fields.join(',');
+  const rows = arr.map(o => {
+    const m = latestEval(o);
+    const row = {
+      id: o.id, nome: o.nome, contato: o.contato, email: o.email, cidade: o.cidade,
+      nivel: o.nivel, pontuacao: o.pontuacao, ultimoTreino: o.ultimoTreino, objetivo: o.objetivo,
+      data_avaliacao: m.data || '',
+      peso:    isFinite(m.peso)    ? String(m.peso).replace('.', ',') : '',
+      cintura: isFinite(m.cintura) ? String(m.cintura).replace('.', ',') : '',
+      quadril: isFinite(m.quadril) ? String(m.quadril).replace('.', ',') : '',
+      abdome:  isFinite(m.abdome)  ? String(m.abdome).replace('.', ',') : '',
+      rcq:     isFinite(m.rcq)     ? String(m.rcq.toFixed(3)).replace('.', ',') : '',
+      rce:     isFinite(m.rce)     ? String(m.rce.toFixed(3)).replace('.', ',') : ''
+    };
+    return fields.map(f => `"${safeCell(row[f])}"`).join(',');
+  });
+  return [header, ...rows].join('\n');
+}
+
+function formatJSONLinesWithMetrics(arr){
+  if(!Array.isArray(arr)) return '';
+  return arr.map(o => {
+    const m = latestEval(o);
+    return JSON.stringify({
+      id: o.id, nome: o.nome, contato: o.contato, email: o.email, cidade: o.cidade,
+      nivel: o.nivel, pontuacao: o.pontuacao, ultimoTreino: o.ultimoTreino, objetivo: o.objetivo,
+      avaliacao: {
+        data: m.data || null,
+        peso: m.peso ?? null,
+        cintura: m.cintura ?? null,
+        quadril: m.quadril ?? null,
+        abdome: m.abdome ?? null,
+        altura_cm: m.altura ?? null,
+        rcq: m.rcq ?? null,
+        rce: m.rce ?? null
+      }
+    });
+  }).join('\n');
+}
+
+// ---------- toast simples ----------
+let toastT = null;
+function toast(msg, error=false){
+  let el = document.getElementById('toast');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'toast';
+    el.className = 'toast';
+    el.style.position = 'fixed';
+    el.style.right = '16px';
+    el.style.bottom = '16px';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.style.display = 'block';
+  el.style.background = error ? 'rgba(183,28,28,.95)' : 'rgba(212,175,55,.95)';
+  el.style.color = '#0b0b0b';
+  el.style.padding = '10px 14px';
+  el.style.borderRadius = '10px';
+  el.style.fontWeight = '600';
+  clearTimeout(toastT);
+  toastT = setTimeout(()=> el.style.display = 'none', 2600);
+}
+
+// ---------- Templates ----------
+function msgTemplate(num,titulo){
+  return `
+  <div class="msg-item">
+    <h4 class="msg-title">${num}) ${titulo}</h4>
+    <div class="msg-text" id="msg${num}"></div>
+    <div class="msg-actions">
+      <button class="btn btn-outline" data-copy="#msg${num}">Copiar</button>
+      <button class="btn btn-primary" data-wa="#msg${num}">Abrir no WhatsApp</button>
+    </div>
+  </div>`;
+}
+
+function promptCardHTML(key, titulo, texto, pills=[]){
+  const safeId = `prompt_${key.replace(/[^a-z0-9_-]/gi,'_')}`;
+  const chips = (pills||[]).map(p=>`<span class="pill">${escapeHTML(p)}</span>`).join(' ');
+  return `
+  <div class="prompt-item">
+    <h4 class="prompt-title">${titulo || key}</h4>
+    ${chips ? `<div style="margin:-4px 0 6px">${chips}</div>` : ''}
+    <div class="prompt-text" id="${safeId}">${escapeHTML(texto || '')}</div>
+    <div class="prompt-actions">
+      <button class="btn btn-outline" data-copy-prompt="#${safeId}">Copiar prompt</button>
+    </div>
+  </div>`;
+}
+
+// ---------- clipboard ----------
+async function copyToClipboard(text){
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch(e){
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch(e2) { console.warn('copy fallback failed', e2); }
+    document.body.removeChild(ta);
+    return false;
+  }
+}
