@@ -1,31 +1,22 @@
 // ================================
-// VIEW: Perfil da Cliente (atualizado com %G)
+// VIEW: Perfil da Cliente (atualizado com RCE, %G e respostas de múltiplas abas)
 // ================================
-import { Store, PROFESSOR_FORM_URL } from '../app.js';
+import { Store, PROFESSOR_FORM_URL, SHEETS_API as SHEETS_API_EXPORT } from '../app.js';
 
 let pesoChart = null;
 let rcqChart  = null;
 let rceChart  = null;
-let bfChart   = null; // novo: gráfico de %G
+let bfChart   = null; // gráfico de %G
+
+// fallback para SHEETS_API se não houver export
+const SHEETS_API = (typeof SHEETS_API_EXPORT === 'string' && SHEETS_API_EXPORT)
+  || (typeof window !== 'undefined' && window.BP_SHEETS_API)
+  || '';
 
 export const ClienteView = {
   async template(id){
     const c = Store.byId(id);
     if (!c) return `<div class="card"><h2>Cliente não encontrada</h2></div>`;
-
-    // --- histórico de avaliações (tabela) ---
-    const historico = (c.avaliacoes || [])
-      .slice()
-      .sort((a,b)=> (a.data||'').localeCompare(b.data||''))
-      .map(a=> `
-        <tr>
-          <td>${a.data || '-'}</td>
-          <td>${a.nivel || '-'}</td>
-          <td>${a.pontuacao ?? '-'}</td>
-          <td>${a.sugestaoNivel || '-'}</td>
-          <td>${a.readiness || '-'}</td>
-        </tr>
-      `).join('');
 
     // --- última avaliação (para métricas recentes) ---
     const ultimaAval = (c.avaliacoes || [])
@@ -33,40 +24,48 @@ export const ClienteView = {
       .sort((a,b)=>(a.data||'').localeCompare(b.data||''))
       .pop() || {};
 
-    const pesoVal    = pick(ultimaAval, ["peso", "Peso (kg)", "peso_kg"]);
-    const cinturaVal = pick(ultimaAval, ["cintura", "Cintura (cm)", "cintura_cm"]);
-    const quadrilVal = pick(ultimaAval, ["quadril", "Quadril (cm)", "quadril_cm"]);
-    // ✅ ler direto do campo salvo na avaliação
-    const abdomeVal  = ultimaAval?.abdomen;
+    // Leituras robustas (aceita chaves alternativas do Sheets)
+    const pesoVal     = pick(ultimaAval, ["peso", "Peso (kg)", "peso_kg"]);
+    const cinturaVal  = pick(ultimaAval, ["cintura", "Cintura (cm)", "cintura_cm"]);
+    const quadrilVal  = pick(ultimaAval, ["quadril", "Quadril (cm)", "quadril_cm"]);
+    const alturaVal   = pick(ultimaAval, ["altura","estatura","altura_cm","altura (cm)","height"]);
+    const pescocoVal  = pick(ultimaAval, ["pescoco","pescoço","pescoco_cm","pescoço (cm)","circunferencia do pescoco","circunferência do pescoço"]);
 
-    const pesoFmt    = nOrDash(pesoVal, 2);
-    const cinturaFmt = nOrDash(cinturaVal, 0);
-    const quadrilFmt = nOrDash(quadrilVal, 0);
-    const abdomeFmt  = nOrDash(abdomeVal, 0);
-    const rcqFmt     = nOrDash(calcRCQ(ultimaAval), 3);
-    const rceFmt     = nOrDash(calcRCE(ultimaAval), 3);
-    const bodyfatFmt = nOrDash(ultimaAval?.bodyfat, 1); // novo: %G formatado
+    // Abdome — variações comuns
+    const abdomeVal   = pick(ultimaAval, [
+      "abdomen","abdome","abdomem","abdominal",
+      "abdomen_cm","abdome_cm",
+      "Abdomen (cm)","Abdome (cm)","Abdome",
+      "perimetro_abdominal","circunferencia_abdominal",
+      "Perímetro Abdominal","Circunferência Abdominal",
+      "perimetro abdominal","circunferencia abdominal"
+    ]);
 
-    // --- respostas completas (para copiar) ---
-    let blocoRespostas = '';
-    if (c._answers && Object.keys(c._answers).length > 0) {
-      const lista = Object.entries(c._answers)
-        .map(([k,v]) => `<li><b>${escapeHTML(k)}:</b> ${escapeHTML(v)}</li>`).join('');
-      const texto = Object.entries(c._answers).map(([k,v]) => `${k}: ${v}`).join('\n');
-      blocoRespostas = `
-        <section class="card">
-          <h3>Respostas completas (Sheets)</h3>
-          <ul style="margin:8px 0 12px 18px;">${lista}</ul>
-          <div class="row" style="gap:10px;">
-            <button class="btn btn-outline" id="copyAnswers">Copiar lista</button>
-            <small style="opacity:.8">Copia todas as respostas para análise no ChatGPT</small>
-          </div>
-          <textarea id="answersText" style="position:absolute;left:-9999px;top:-9999px;">${escapePlain(texto)}</textarea>
-        </section>
-      `;
-    }
+    // %G salvo (se já veio do Store/planilha)
+    const bodyfatSaved = pick(ultimaAval, ["bodyfat","body_fat","bf","%g","gordura_percentual","bf_marinha","bf_navy"]);
 
-    // --- normalização dos treinos para suportar as duas nomenclaturas ---
+    // formatações
+    const pesoFmt     = nOrDash(pesoVal, 2);
+    const cinturaFmt  = nOrDash(cinturaVal, 0);
+    const quadrilFmt  = nOrDash(quadrilVal, 0);
+    const abdomeFmt   = nOrDash(abdomeVal, 0);
+
+    // RCQ/RCE
+    const rcqFmt      = nOrDash(calcRCQ(ultimaAval), 3);
+    const rceFmt      = nOrDash(calcRCE(ultimaAval), 3);
+
+    // %G (fallback local se não vier salvo)
+    const sexoInferido = inferSexo(c) || 'F'; // padrão feminino
+    const bfLocal = navyBodyFat(
+      sexoInferido,
+      toNum(cinturaVal),
+      toNum(quadrilVal),
+      toNum(pescocoVal),
+      toNum(alturaVal)
+    );
+    const bodyfatFmt = nOrDash((bodyfatSaved ?? bfLocal), 1);
+
+    // --- normalização dos treinos ---
     const treinos = Array.isArray(c.treinos)
       ? c.treinos.slice().map(t => ({
           id: t.id,
@@ -110,7 +109,20 @@ export const ClienteView = {
       ? `<a class="btn btn-primary" href="${linkProfessor}" target="_blank" rel="noopener">📋 Formulário do Professor</a>`
       : `<button class="btn btn-outline" id="professorFormBtn" title="Defina PROFESSOR_FORM_URL no app.js">📋 Formulário do Professor</button>`;
 
-    // --- botão mensagens rápidas + modal ---
+    // Bloco: respostas (todas as abas) para GPT
+    const respostasMultiAbas = `
+      <section class="card">
+        <h3 style="margin-top:0">Respostas completas (todas as abas)</h3>
+        <div class="row" style="gap:10px;flex-wrap:wrap">
+          <button class="btn btn-primary" id="btnFetchAllAnswers">Baixar respostas (todas as abas)</button>
+          <button class="btn btn-outline" id="btnCopyAllAnswers" disabled>Copiar para GPT</button>
+        </div>
+        <textarea id="allAnswersText" style="position:absolute;left:-9999px;top:-9999px;"></textarea>
+        <div id="allAnswersStatus" style="margin-top:8px;opacity:.8"></div>
+      </section>
+    `;
+
+    // Modal de mensagens rápidas (inalterado)
     const modalCSS = `
       <style>
         .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:9998}
@@ -126,7 +138,6 @@ export const ClienteView = {
         @media(min-width:760px){ .modal-grid{grid-template-columns:1fr 1fr} }
       </style>
     `;
-
     const quickBtn = `<button class="btn btn-outline" id="quickMsgBtn">💬 Mensagens rápidas</button>`;
 
     return `
@@ -159,7 +170,14 @@ export const ClienteView = {
           <table class="table" style="min-width:760px">
             <thead>
               <tr>
-                <th>Data</th><th>Peso (kg)</th><th>Cintura (cm)</th><th>Quadril (cm)</th><th>Abdome (cm)</th><th>RCQ</th><th>RCE</th><th>%G</th>
+                <th>Data</th>
+                <th>Peso (kg)</th>
+                <th>Cintura (cm)</th>
+                <th>Quadril (cm)</th>
+                <th>Abdome (cm)</th>
+                <th>RCQ</th>
+                <th>RCE</th>
+                <th>%G</th>
               </tr>
             </thead>
             <tbody>
@@ -176,8 +194,11 @@ export const ClienteView = {
             </tbody>
           </table>
         </div>
-        <small style="opacity:.75">Os valores são lidos das avaliações registradas (não do bloco “Respostas completas”).</small>
+        <small style="opacity:.75">Valores lidos das avaliações registradas.</small>
       </section>
+
+      <!-- Respostas (todas as abas) para GPT -->
+      ${SHEETS_API ? respostasMultiAbas : ''}
 
       <section class="card">
         <div class="row" style="justify-content:space-between;align-items:center;gap:10px">
@@ -196,8 +217,7 @@ export const ClienteView = {
         `}
       </section>
 
-      ${blocoRespostas}
-
+      <!-- Gráficos -->
       <section class="card chart-card">
         <h3>Evolução do Peso (kg)</h3>
         <div id="pesoEmpty" style="display:none;color:#aaa">Sem dados de peso suficientes.</div>
@@ -216,18 +236,17 @@ export const ClienteView = {
       <section class="card chart-card">
         <div class="row" style="justify-content:space-between;align-items:flex-end;">
           <h3 style="margin:0">RCE (cintura/estatura)</h3>
-        <small style="opacity:.85">regra de bolso: manter &lt; 0,50</small>
+          <small style="opacity:.85">regra de bolso: manter &lt; 0,50</small>
         </div>
         <div id="rceEmpty" style="display:none;color:#aaa">Sem dados de cintura/estatura suficientes.</div>
         <canvas id="chartRCE" height="160"></canvas>
         <small style="opacity:.75">Linha guia 0,50 = cintura menor que metade da altura.</small>
       </section>
 
-      <!-- novo: gráfico de %G -->
       <section class="card chart-card">
         <div class="row" style="justify-content:space-between;align-items:flex-end;">
           <h3 style="margin:0">%G (Protocolo Marinha EUA)</h3>
-          <small style="opacity:.85">Se informado no Forms, usamos o valor reportado; senão, mostramos o estimado.</small>
+          <small style="opacity:.85">Se vier salvo, usamos; senão, mostramos o estimado.</small>
         </div>
         <div id="bfEmpty" style="display:none;color:#aaa">Sem dados de %G suficientes.</div>
         <canvas id="chartBF" height="160"></canvas>
@@ -289,18 +308,6 @@ export const ClienteView = {
     const c = Store.byId(id);
     if (!c) return;
 
-    // copiar respostas
-    const copyBtn = document.getElementById('copyAnswers');
-    if (copyBtn){
-      copyBtn.addEventListener('click', () => {
-        const ta = document.getElementById('answersText');
-        ta.select();
-        document.execCommand('copy');
-        copyBtn.textContent = 'Copiado!';
-        setTimeout(()=> copyBtn.textContent = 'Copiar lista', 1200);
-      });
-    }
-
     // aviso caso PROFESSOR_FORM_URL não esteja setado
     const profBtn = document.getElementById('professorFormBtn');
     if (profBtn){
@@ -309,124 +316,90 @@ export const ClienteView = {
       });
     }
 
-    // ---------- Mensagens rápidas ----------
-    const modal = document.getElementById('msgModal');
-    const backdrop = document.getElementById('msgBackdrop');
-    const openBtn = document.getElementById('quickMsgBtn');
-    const closeBtn= document.getElementById('msgCloseBtn');
+    // ===== Respostas (todas as abas) para GPT =====
+    const btnFetchAll = document.getElementById('btnFetchAllAnswers');
+    const btnCopyAll  = document.getElementById('btnCopyAllAnswers');
+    const taAll       = document.getElementById('allAnswersText');
+    const statusEl    = document.getElementById('allAnswersStatus');
 
-    const openModal = ()=>{ modal.classList.add('show'); backdrop.classList.add('show'); };
-    const closeModal= ()=>{ modal.classList.remove('show'); backdrop.classList.remove('show'); };
+    if (btnFetchAll && SHEETS_API){
+      btnFetchAll.addEventListener('click', async ()=>{
+        btnFetchAll.disabled = true;
+        setStatus('Baixando respostas das abas…');
 
-    openBtn?.addEventListener('click', openModal);
-    closeBtn?.addEventListener('click', closeModal);
-    backdrop?.addEventListener('click', closeModal);
+        try{
+          const names = [
+            'Form Responses 1','Form Responses 2','Form Responses 3',
+            'Respostas ao formulário 1','Respostas do formulário 1',
+            'Respostas','Responses'
+          ];
+          const all = [];
+          for (const name of names){
+            const url = `${SHEETS_API}?sheet=${encodeURIComponent(name)}`;
+            const r = await fetch(url);
+            if (!r.ok) continue;
+            const arr = await r.json();
+            if (!Array.isArray(arr)) continue;
 
-    // Modelos (com foco: treino feminino, emagrecimento e neurociência de hábitos)
-    const nome = c?.nome ? c.nome.split(' ')[0] : '';
-    const blogHint  = '🔗 [seu-link-do-blog-aqui]';
-    const ebookHint = '📘 [link-do-eBook-Bella-Prime]';
-    const avaliacaoCTA = 'Posso te enviar o link da avaliação gratuita?';
+            // filtra as linhas desta cliente (por id/email/contato)
+            const idKey   = String(c?.id||'').trim().toLowerCase();
+            const email   = String(c?.email||'').trim().toLowerCase();
+            const wppLast = onlyDigits(c?.contato);
 
-    const M1 = [
-      `Oi! 👋 Seja muito bem-vinda!`,
-      `Aqui eu falo de *treino feminino*, *emagrecimento real* e *neurociência aplicada à mudança de hábitos*.`,
-      ``,
-      `Se quiser, te mando o link da **avaliação gratuita** que uso pra montar um diagnóstico personalizado.`,
-      `É rapidinho e já mostra por onde começar pra ter resultado de verdade. 💪✨`,
-      ``,
-      `Enquanto isso, passa no blog — toda semana tem dicas práticas:`,
-      `${blogHint}`,
-      ``,
-      `${avaliacaoCTA}`
-    ].join('\n');
+            const hits = arr.filter(o=>{
+              const oid   = (String(o.id||o.ID||'').trim().toLowerCase());
+              const oem   = (String(o.email||o['E-mail']||o.Email||'').trim().toLowerCase());
+              const ocont = onlyDigits(o.contato || o.WhatsApp || o.whatsapp || '');
+              return (idKey && oid && oid===idKey)
+                  || (email && oem && oem===email)
+                  || (wppLast && ocont && ocont.endsWith(wppLast));
+            });
 
-    const M2 = [
-      `Oi, tudo bem? 👋`,
-      `Vi que você começou a me seguir — bem-vinda! 🌹`,
-      `Preparei um **eBook gratuito** apresentando o **Tratamento Bella Prime™**: níveis de evolução, método e como ele integra *treino + mente + hábitos*.`,
-      ``,
-      `Quer o link pra baixar?`,
-      `${ebookHint}`
-    ].join('\n');
+            hits.forEach(row=>{
+              all.push({ _sheet:name, ...row });
+            });
+          }
 
-    const M3 = [
-      `Oi${nome?`, ${nome}`:''}! 👋`,
-      `Recebi seu formulário e já posso começar teu diagnóstico.`,
-      `Pra eu montar com precisão, me envie **3 fotos corporais**: *frente, costas e de lado*.`,
-      ``,
-      `👉 Do pescoço pra baixo, roupas de treino (top + short/legging preta), em pé, com boa iluminação.`,
-      `Assim analiso postura, pontos de retenção e defino o plano com mais assertividade. 💪✨`
-    ].join('\n');
+          if (all.length === 0){
+            setStatus('Nenhuma resposta encontrada para esta cliente nas abas verificadas.');
+            btnFetchAll.disabled = false;
+            return;
+          }
 
-    const M4 = [
-      `Oi${nome?`, ${nome}`:''}! Tudo bem? 😊`,
-      `Vi que você preencheu o formulário, mas ainda não finalizamos o envio das fotos.`,
-      `Sem elas eu não consigo concluir teu diagnóstico nem ajustar treino e hábitos com precisão.`,
-      ``,
-      `Se preferir, te mando um exemplo de como fazer — é simples e rapidinho.`,
-      `Quer que eu te envie o modelo pra facilitar? 📸`
-    ].join('\n');
+          // monta texto “legível para GPT”
+          const blob = all.map((o,i)=>{
+            const entries = Object.entries(o)
+              .filter(([k]) => k !== '_sheet' && k !== 'avaliacoes') // limpa campos internos
+              .map(([k,v]) => `${k}: ${v}`)
+              .join('\n');
+            return [
+              `=== ABA: ${o._sheet} (registro #${i+1}) ===`,
+              entries,
+              ''
+            ].join('\n');
+          }).join('\n');
 
-    // injeta textos
-    const setText = (sel, txt) => { const el = document.getElementById(sel); if (el) el.textContent = txt; };
-    setText('msg1', M1);
-    setText('msg2', M2);
-    setText('msg3', M3);
-    setText('msg4', M4);
-
-    // ações de copiar e abrir no WhatsApp
-    const handleCopy = (selector) => {
-      const el = document.querySelector(selector);
-      if (!el) return;
-      const ta = document.createElement('textarea');
-      ta.value = el.textContent || '';
-      ta.setAttribute('readonly','');
-      ta.style.position='fixed'; ta.style.left='-9999px';
-      document.body.appendChild(ta);
-      ta.select(); ta.setSelectionRange(0, ta.value.length);
-      document.execCommand('copy');
-      document.body.removeChild(ta);
-    };
-    const onlyDigits = s => String(s||'').replace(/\D+/g,'');
-    const waOpen = (selector) => {
-      const msg = (document.querySelector(selector)?.textContent||'').trim();
-      if (!msg) return;
-      const phone = onlyDigits(c?.contato);
-      const url = phone ? `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`
-                        : `https://wa.me/?text=${encodeURIComponent(msg)}`;
-      window.open(url, '_blank', 'noopener');
-    };
-
-    document.querySelectorAll('[data-copy]').forEach(btn=>{
-      btn.addEventListener('click', ()=>{
-        const sel = btn.getAttribute('data-copy');
-        handleCopy(sel);
-        btn.textContent = 'Copiado!';
-        setTimeout(()=> btn.textContent = 'Copiar', 1200);
+          taAll.value = blob;
+          btnCopyAll.disabled = false;
+          setStatus(`Pronto! ${all.length} registro(s) reunido(s). Clique em "Copiar para GPT".`);
+        }catch(err){
+          setStatus('Erro ao baixar respostas. Verifique o SHEETS_API no app.js e o deployment do Apps Script.');
+          btnFetchAll.disabled = false;
+        }
       });
-    });
-    document.querySelectorAll('[data-wa]').forEach(btn=>{
-      btn.addEventListener('click', ()=>{
-        const sel = btn.getAttribute('data-wa');
-        waOpen(sel);
-      });
-    });
 
-    // Excluir treino
-    document.querySelectorAll('.btn-del-treino').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const tid = btn.getAttribute('data-treino');
-        if (!tid) return;
-        const ok = confirm('Remover este treino? Esta ação não pode ser desfeita.');
-        if (!ok) return;
-        const cli = Store.byId(id);
-        if (!cli || !Array.isArray(cli.treinos)) return;
-        cli.treinos = cli.treinos.filter(t => String(t.id) !== String(tid));
-        Store.upsert(cli);
-        location.hash = `#/cliente/${id}`;
+      btnCopyAll?.addEventListener('click', ()=>{
+        taAll.select();
+        document.execCommand('copy');
+        btnCopyAll.textContent = 'Copiado!';
+        setTimeout(()=> btnCopyAll.textContent = 'Copiar para GPT', 1200);
       });
-    });
+    }
+
+    function setStatus(msg){
+      if (statusEl) statusEl.textContent = msg || '';
+    }
+    function onlyDigits(s){ return String(s||'').replace(/\D+/g,''); }
 
     // ========== Gráficos (somente se Chart estiver carregado) ==========
     if (typeof window.Chart !== 'function') return;
@@ -484,7 +457,7 @@ export const ClienteView = {
         },
         options: { responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:false } } }
       });
-      if (rcqEmpty) rcqEmpty.style.display = 'none';
+      if (rcqEmpty) pesoEmpty.style.display = 'none';
     } else if (rcqEmpty) { rcqEmpty.style.display = 'block'; }
 
     // RCE (WHtR)
@@ -522,10 +495,22 @@ export const ClienteView = {
       if (rceEmpty) rceEmpty.style.display = 'none';
     } else if (rceEmpty) { rceEmpty.style.display = 'block'; }
 
-    // %G (Body Fat) — novo
+    // %G (Body Fat)
     const bfCtx = document.getElementById('chartBF');
     const bfEmpty = document.getElementById('bfEmpty');
     const serieBF = (c.avaliacoes || [])
+      .map(a => {
+        if (typeof a.bodyfat === 'number' && !isNaN(a.bodyfat)) return a;
+        // tenta estimar se não veio salvo na linha
+        const est = navyBodyFat(
+          inferSexo(c) || 'F',
+          toNum(a.cintura),
+          toNum(a.quadril),
+          toNum(a.pescoco || a['pescoço']),
+          toNum(a.altura)
+        );
+        return (typeof est === 'number') ? { ...a, bodyfat: est } : a;
+      })
       .filter(a => typeof a.bodyfat === 'number' && !isNaN(a.bodyfat))
       .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
     if (bfChart) bfChart.destroy();
@@ -594,4 +579,35 @@ function calcStatusTreino(t){
   const dVen = t?.data_venc   ? new Date(`${t.data_venc}T12:00:00`)   : null;
   if (dIni && dVen && dIni <= hoje && hoje <= dVen) return 'Ativo';
   return 'Vencido';
+}
+
+// --- %G (Marinha EUA) helpers ---
+function cmToIn(cm){ return Number.isFinite(cm) ? (cm / 2.54) : undefined; }
+function log10(x){ return Math.log(x) / Math.LN10; }
+function navyBodyFat(sexo, cinturaCm, quadrilCm, pescocoCm, alturaCm){
+  const C = cmToIn(cinturaCm);
+  const H = cmToIn(alturaCm);
+  const N = cmToIn(pescocoCm);
+  const Q = cmToIn(quadrilCm);
+  if (!Number.isFinite(C) || !Number.isFinite(H) || !Number.isFinite(N)) return undefined;
+
+  if (sexo === 'M'){
+    const diff = C - N;
+    if (diff <= 0) return undefined;
+    const bf = 86.010 * log10(diff) - 70.041 * log10(H) + 36.76;
+    return Number.isFinite(bf) ? Number(Math.max(0, bf).toFixed(1)) : undefined;
+  } else {
+    if (!Number.isFinite(Q)) return undefined;
+    const sum = C + Q - N;
+    if (sum <= 0) return undefined;
+    const bf = 163.205 * log10(sum) - 97.684 * log10(H) - 78.387;
+    return Number.isFinite(bf) ? Number(Math.max(0, bf).toFixed(1)) : undefined;
+  }
+}
+function inferSexo(c){
+  const txt = Object.values(c?._answers||{}).join(' ').toLowerCase();
+  if (!txt) return undefined;
+  if (/\bmasc|masculino|homem|male\b/.test(txt)) return 'M';
+  if (/\bfem|feminino|mulher|female\b/.test(txt)) return 'F';
+  return undefined;
 }
