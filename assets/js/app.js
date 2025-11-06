@@ -9,10 +9,9 @@ import { TreinoView }    from './views/treinoview.js';
 import { RelatorioView } from './views/relatorioview.js';
 
 // ---------- Config gerais ----------
-const SHEETS_API = 'https://script.google.com/macros/s/AKfycbyTQxy-R22hFvEtLrBPf70qFuouXBPNCNZP87StBK_fNvIjQlvmB2Dy77pooPECwekr/exec';
+export const SHEETS_API = 'https://script.google.com/macros/s/AKfycbyTQxy-R22hFvEtLrBPf70qFuouXBPNCNZP87StBK_fNvIjQlvmB2Dy77pooPECwekr/exec';
 
-// Se o seu Apps Script aceita ?tab=<nome_da_aba>, declare aqui as abas a ler.
-// Mantém compatível: se alguma aba não existir, ignora e segue.
+// Se o seu Apps Script aceita ?sheet=<nome_da_aba> (ou ?tab=...), declare aqui as abas a ler.
 const SHEETS_TABS = [
   'Form Responses 1',
   'Form Responses 2',
@@ -76,12 +75,12 @@ function log10(x){ return Math.log(x) / Math.LN10; }
 
 /**
  * Calcula %G Marinha EUA.
- * @param {'F'|'M'} sexo - 'F' feminino, 'M' masculino
+ * @param {'F'|'M'} sexo
  * @param {number} cinturaCm
  * @param {number} quadrilCm - obrigatório para mulheres
  * @param {number} pescocoCm
  * @param {number} alturaCm
- * @returns {number|undefined} bodyfat em %, com 1 casa (ex.: 27.3)
+ * @returns {number|undefined}
  */
 function navyBodyFat(sexo, cinturaCm, quadrilCm, pescocoCm, alturaCm){
   const C = cmToIn(cinturaCm);
@@ -96,7 +95,6 @@ function navyBodyFat(sexo, cinturaCm, quadrilCm, pescocoCm, alturaCm){
     const bf = 86.010 * log10(diff) - 70.041 * log10(H) + 36.76;
     return Number.isFinite(bf) ? Number(Math.max(0, bf).toFixed(1)) : undefined;
   } else {
-    // feminino: precisa de quadril
     if (!Number.isFinite(Q)) return undefined;
     const sum = C + Q - N;
     if (sum <= 0) return undefined;
@@ -123,17 +121,17 @@ function collectAnswersFromRaw(raw){
     'cintura','cintura (cm)','cintura cm',
     'quadril','quadril (cm)','quadril cm',
     'altura','estatura','altura (cm)','height',
-    // abdômen (todas as variações comuns para não cair em _answers)
+    // abdômen
     'abdome','abdome (cm)','abdome cm',
     'abdomen','abdomen (cm)','abdomen cm',
     'abdomem','abdomem (cm)','abdomem cm',
     'perimetro abdominal','perimetro abdominal (cm)','perimetro abdominal cm',
     'circunferencia abdominal','circunferencia abdominal (cm)','circunferencia abdominal cm',
-    // pescoço (para %G)
+    // pescoço
     'pescoço','pescoco','circunferencia do pescoco','pescoço (cm)','pescoco (cm)',
-    // sexo/gênero (para %G)
+    // sexo
     'sexo','gênero','genero','sexo biologico','sexo biológico',
-    // %G (vindo do Forms) — novos aliases para não irem ao _answers
+    // %G
     '%g','% g','percentual de gordura','percentual_gordura','gordura corporal','gordura corporal (%)','gordura corporal %',
     'bf','bf%','body fat','bodyfat','% body fat',
     // form do professor
@@ -154,9 +152,9 @@ function collectAnswersFromRaw(raw){
 
 // ---------- Dados (Sheets -> seed.json) ----------
 async function loadSeed(){
-  // helper: busca uma aba específica (ou base sem tab/sheet)
+  // helper: busca uma aba específica (tenta ?tab= e ?sheet=)
   const fetchTab = async (tabName) => {
-    const urls = tabName
+    const tryUrls = tabName
       ? [
           `${SHEETS_API}?tab=${encodeURIComponent(tabName)}`,
           `${SHEETS_API}?sheet=${encodeURIComponent(tabName)}`
@@ -164,35 +162,31 @@ async function loadSeed(){
       : [SHEETS_API];
 
     let lastErr;
-    for (const url of urls){
+    for (const url of tryUrls){
       try{
         const r = await fetch(url, { cache:'no-store' });
-        if (!r.ok) throw new Error(`Sheets HTTP ${r.status} (${url})`);
+        if (!r.ok) throw new Error(`Sheets HTTP ${r.status} (${tabName||'base'})`);
         const data = await r.json();
-        if (!Array.isArray(data)) throw new Error(`Formato inválido (${url})`);
-        // anota a origem (não impacta views)
+        if (!Array.isArray(data)) throw new Error(`Formato inválido em ${tabName||'base'}`);
         return data.map(row => ({ __tab: tabName || 'base', ...row }));
       }catch(e){ lastErr = e; }
     }
-    throw lastErr || new Error('Falha em todas as URLs');
+    throw lastErr || new Error('Falha ao buscar aba');
   };
 
   try{
     let datasets = [];
-    // tenta por abas; se der erro geral, cai no catch/seed
     if (Array.isArray(SHEETS_TABS) && SHEETS_TABS.length){
       const parts = await Promise.allSettled(SHEETS_TABS.map(fetchTab));
       for (const p of parts){
         if (p.status === 'fulfilled') datasets = datasets.concat(p.value);
         else console.warn('Aba falhou (ignorada):', p.reason?.message || p.reason);
       }
-      // fallback: se todas as abas falharam, tenta a base sem ?tab=
       if (datasets.length === 0){
-        console.warn('Nenhuma aba retornou dados. Tentando base sem ?tab=');
+        console.warn('Nenhuma aba retornou dados. Tentando base sem parâmetro…');
         datasets = await fetchTab(null);
       }
     } else {
-      // não há abas definidas: usa base
       datasets = await fetchTab(null);
     }
 
@@ -242,7 +236,7 @@ export const Store = {
           'cidade-estado','cidade - estado','cidade/estado','cidade uf','cidadeuf','cidade'
         ]) || '';
 
-        // Avaliação base (data/nivel/pontuacao)
+        // Avaliação base
         const dataAval = pick(o, ['data','dataavaliacao','ultimotreino']);
         const pontForm = Number(pick(o, ['pontuacao','pontuação','score','nota']) || 0);
         const nivelIn  = pick(o, ['nivel','nível','fase','faixa']);
@@ -252,16 +246,13 @@ export const Store = {
         const cinturaN  = toNum(pickByRegex(o, [/\bcintura\b/]));
         const quadrilN  = toNum(pickByRegex(o, [/\bquadril\b/]));
         const alturaRaw = toNum(pickByRegex(o, [/\baltura\b/, /\bestatura\b/, /\baltura \(cm\)\b/, /\bheight\b/]));
-        // altura em cm; se vier em metros (<=3), converte pra cm
         const alturaN   = (typeof alturaRaw === 'number' && alturaRaw <= 3) ? alturaRaw*100 : alturaRaw;
 
-        // Abdômen (todas as formas comuns)
         const abdomenN  = toNum(pickByRegex(o, [
           /\babdome\b/, /\babdomen\b/, /\babdomem\b/, /\babdominal\b/,
           /perimetro abdominal/, /circunferencia abdominal/
         ]));
 
-        // Pescoço (para %G)
         const pescocoN  = toNum(pickByRegex(o, [
           /\bpesco[cç]o\b/, /circunferencia do pescoco/
         ]));
@@ -270,36 +261,19 @@ export const Store = {
         const sexoRaw = pickByRegex(o, [/\bsexo\b/, /\bg[êe]nero\b/, /sexo biolog/i]);
         const sx = String(sexoRaw || '').toLowerCase();
         const isMale   = /\b(m|masc|masculino|homem|male)\b/.test(sx);
-        const isFemale = /\b(f|fem|feminino|mulher|female)\b/.test(sx);
-        const sexoNorm = isMale ? 'M' : 'F'; // padrão feminino se indefinido
+        const sexoNorm = isMale ? 'M' : 'F';
 
         // RCQ / WHtR
         const rcqCalc   = (Number.isFinite(cinturaN) && Number.isFinite(quadrilN) && quadrilN !== 0) ? (cinturaN / quadrilN) : undefined;
         const whtrCalc  = (Number.isFinite(cinturaN) && Number.isFinite(alturaN)  && alturaN  !== 0) ? (cinturaN / alturaN)  : undefined;
 
-        // %G do Forms (direto), com fallback no cálculo da Marinha EUA  —— PATCH
+        // %G do Forms (direto) com fallback no cálculo
         const bodyfatForm = toNum(pickByRegex(o, [
-          /^%?\s*g$/,                       // "%G" ou "g"
-          /\bpercentual.*gordura\b/,        // "percentual de gordura"
-          /\bgordura.*corporal\b/,          // "gordura corporal"
-          /\bbf%?\b/,                       // "BF" ou "BF%"
-          /\bbody\s*fat\b/,                 // "body fat"
-          /\bbodyfat\b/                     // "bodyfat"
+          /^%?\s*g$/, /\bpercentual.*gordura\b/, /\bgordura.*corporal\b/,
+          /\bbf%?\b/, /\bbody\s*fat\b/, /\bbodyfat\b/
         ]));
         const bodyfatCalc = navyBodyFat(sexoNorm, cinturaN, quadrilN, pescocoN, alturaN);
         const bodyfatFinal = Number.isFinite(bodyfatForm) ? bodyfatForm : (Number.isFinite(bodyfatCalc) ? bodyfatCalc : undefined);
-
-        // nível default
-        const nivelDefault = (() => {
-          const n = strip(nivelIn || '');
-          if (n.startsWith('fund')) return 'Fundação';
-          if (n.startsWith('asc'))  return 'Ascensão';
-          if (n.startsWith('dom'))  return 'Domínio';
-          if (n.startsWith('over')) return 'OverPrime';
-          if (pontForm <= 2)  return 'Fundação';
-          if (pontForm <= 6)  return 'Ascensão';
-          return 'Domínio';
-        })();
 
         const base = {
           id,
@@ -307,7 +281,16 @@ export const Store = {
           contato: contato || '',
           email: email || '',
           cidade,
-          nivel: nivelDefault,
+          nivel: (() => {
+            const n = strip(nivelIn || '');
+            if (n.startsWith('fund')) return 'Fundação';
+            if (n.startsWith('asc'))  return 'Ascensão';
+            if (n.startsWith('dom'))  return 'Domínio';
+            if (n.startsWith('over')) return 'OverPrime';
+            if (pontForm <= 2)  return 'Fundação';
+            if (pontForm <= 6)  return 'Ascensão';
+            return 'Domínio';
+          })(),
           pontuacao: isNaN(pontForm) ? 0 : pontForm,
           ultimoTreino: dataAval || undefined,
           renovacaoDias: Number(pick(o,['renovacaodias','renovacao','ciclodias'])) || 30,
@@ -333,7 +316,7 @@ export const Store = {
           base._upgradeEvent = { aprovado, novoNivel, data: dataUp, obs: obsProf || '' };
         }
 
-        // --- Pontuação automática por respostas (fallback) ---
+        // --- Pontuação automática fallback ---
         if ((!pontForm || isNaN(pontForm)) && base._answers && Object.keys(base._answers).length){
           const auto = calcularPontuacao(base._answers);
           base.pontuacao = auto;
@@ -341,7 +324,12 @@ export const Store = {
         }
 
         // --- Registrar avaliação (com métricas) ---
-        if (dataAval || Number.isFinite(base.pontuacao) || Number.isFinite(pesoN) || Number.isFinite(cinturaN) || Number.isFinite(quadrilN) || Number.isFinite(alturaN) || Number.isFinite(abdomenN) || Number.isFinite(pescocoN) || Number.isFinite(bodyfatFinal)) {
+        if (
+          dataAval || Number.isFinite(base.pontuacao) ||
+          Number.isFinite(pesoN) || Number.isFinite(cinturaN) || Number.isFinite(quadrilN) ||
+          Number.isFinite(alturaN) || Number.isFinite(abdomenN) || Number.isFinite(pescocoN) ||
+          Number.isFinite(bodyfatFinal)
+        ) {
           const dataISO = /^\d{4}-\d{2}-\d{2}$/.test(String(dataAval)) ? String(dataAval) : todayISO();
           const sugestaoNivel = nivelPorPontuacao(base.pontuacao);
           const readiness = prontidaoPorPontuacao(base.pontuacao);
@@ -355,18 +343,16 @@ export const Store = {
             peso:    Number.isFinite(pesoN)        ? pesoN        : undefined,
             cintura: Number.isFinite(cinturaN)     ? cinturaN     : undefined,
             quadril: Number.isFinite(quadrilN)     ? quadrilN     : undefined,
-            altura:  Number.isFinite(alturaN)      ? alturaN      : undefined,   // cm
-            abdomen: Number.isFinite(abdomenN)     ? abdomenN     : undefined,   // cm
-            pescoco: Number.isFinite(pescocoN)     ? pescocoN     : undefined,   // cm
+            altura:  Number.isFinite(alturaN)      ? alturaN      : undefined,
+            abdomen: Number.isFinite(abdomenN)     ? abdomenN     : undefined,
+            pescoco: Number.isFinite(pescocoN)     ? pescocoN     : undefined,
             rcq:     Number.isFinite(rcqCalc)      ? rcqCalc      : undefined,
             whtr:    Number.isFinite(whtrCalc)     ? whtrCalc     : undefined,
-            bodyfat: Number.isFinite(bodyfatFinal) ? bodyfatFinal : undefined    // %G (Forms > cálculo)
+            bodyfat: Number.isFinite(bodyfatFinal) ? bodyfatFinal : undefined
           });
         }
 
-        // marca de origem (debug/inspeção; não usada em views)
         if (raw && raw.__tab) base.__tab = raw.__tab;
-
         return base;
       });
 
@@ -400,7 +386,6 @@ export const Store = {
           c.elegivelPromocao   = c.prontaConsecutivas >= 2;
         }
 
-        // aplica último upgrade aprovado
         const ups = (c._allUpgrades || []).filter(u => u && u.aprovado);
         if (ups.length){
           ups.sort((a,b)=> (a.data||'').localeCompare(b.data||''));
@@ -443,7 +428,6 @@ export const Store = {
     this.persist();
   },
 
-  // Export/Import
   exportJSON(){
     try{
       const blob = new Blob([JSON.stringify(this.state.clientes, null, 2)], {type:'application/json'});
@@ -648,7 +632,7 @@ function ensureStylesInjected(){
   document.head.appendChild(s);
 }
 
-// Cria automaticamente data-label nos <td> com base nos <th> e marca a última célula como “ações”
+// Cria automaticamente data-label nos <td> e marca a última célula como “ações”
 function enhanceTables(){
   document.querySelectorAll('table.table').forEach(table=>{
     const headers = [...table.querySelectorAll('thead th')].map(th=>th.textContent.trim());
