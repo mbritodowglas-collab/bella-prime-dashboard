@@ -1,6 +1,5 @@
 // =====================================
 // BELLA PRIME · APP PRINCIPAL (com respostas completas + métricas antropométricas)
-// app.js — build diag v1 (render guard + overlay de erro)
 // =====================================
 
 import { DashboardView } from './views/dashboardview.js';
@@ -13,7 +12,12 @@ import { RelatorioView } from './views/relatorioview.js';
 const SHEETS_API = 'https://script.google.com/macros/s/AKfycbyTQxy-R22hFvEtLrBPf70qFuouXBPNCNZP87StBK_fNvIjQlvmB2Dy77pooPECwekr/exec';
 
 // Se o seu Apps Script aceita ?tab=<nome_da_aba>, declare aqui as abas a ler.
-const SHEETS_TABS = ['avaliacao','reavaliacao','professor'];
+// Mantém compatível: se alguma aba não existir, ignora e segue.
+const SHEETS_TABS = [
+  'avaliacao',
+  'reavaliacao',
+  'professor'
+];
 
 // Branding (lido pelo RelatorioView via import dinâmico)
 export const BRAND_NAME = 'Marcio Dowglas Treinador';
@@ -69,8 +73,15 @@ const normNivel = (x='') => {
 // ---------- % Gordura (Marinha EUA) ----------
 function cmToIn(cm){ return Number.isFinite(cm) ? (cm / 2.54) : undefined; }
 function log10(x){ return Math.log(x) / Math.LN10; }
+
 /**
  * Calcula %G Marinha EUA.
+ * @param {'F'|'M'} sexo - 'F' feminino, 'M' masculino
+ * @param {number} cinturaCm
+ * @param {number} quadrilCm - obrigatório para mulheres
+ * @param {number} pescocoCm
+ * @param {number} alturaCm
+ * @returns {number|undefined} bodyfat em %, com 1 casa (ex.: 27.3)
  */
 function navyBodyFat(sexo, cinturaCm, quadrilCm, pescocoCm, alturaCm){
   const C = cmToIn(cinturaCm);
@@ -85,6 +96,7 @@ function navyBodyFat(sexo, cinturaCm, quadrilCm, pescocoCm, alturaCm){
     const bf = 86.010 * log10(diff) - 70.041 * log10(H) + 36.76;
     return Number.isFinite(bf) ? Number(Math.max(0, bf).toFixed(1)) : undefined;
   } else {
+    // feminino: precisa de quadril
     if (!Number.isFinite(Q)) return undefined;
     const sum = C + Q - N;
     if (sum <= 0) return undefined;
@@ -106,16 +118,22 @@ function collectAnswersFromRaw(raw){
     'pontuacao','pontuação','score','pontos','nota',
     'ultimotreino','ultimaavaliacao','dataavaliacao','data',
     'renovacaodias','renovacao','ciclodias',
-    // métricas
+    // métricas que extraímos separadamente
     'peso','peso (kg)','peso kg',
     'cintura','cintura (cm)','cintura cm',
     'quadril','quadril (cm)','quadril cm',
     'altura','estatura','altura (cm)','height',
-    'abdome','abdome (cm)','abdome cm','abdomen','abdomen (cm)','abdomen cm',
+    // abdômen (todas as variações comuns para não cair em _answers)
+    'abdome','abdome (cm)','abdome cm',
+    'abdomen','abdomen (cm)','abdomen cm',
+    'abdomem','abdomem (cm)','abdomem cm',
     'perimetro abdominal','perimetro abdominal (cm)','perimetro abdominal cm',
     'circunferencia abdominal','circunferencia abdominal (cm)','circunferencia abdominal cm',
+    // pescoço (para %G)
     'pescoço','pescoco','circunferencia do pescoco','pescoço (cm)','pescoco (cm)',
+    // sexo/gênero (para %G)
     'sexo','gênero','genero','sexo biologico','sexo biológico',
+    // %G (vindo do Forms) — novos aliases para não irem ao _answers
     '%g','% g','percentual de gordura','percentual_gordura','gordura corporal','gordura corporal (%)','gordura corporal %',
     'bf','bf%','body fat','bodyfat','% body fat',
     // form do professor
@@ -136,30 +154,36 @@ function collectAnswersFromRaw(raw){
 
 // ---------- Dados (Sheets -> seed.json) ----------
 async function loadSeed(){
+  // helper: busca uma aba específica (ou base sem tab)
   const fetchTab = async (tabName) => {
     const url = tabName ? `${SHEETS_API}?tab=${encodeURIComponent(tabName)}` : SHEETS_API;
     const r = await fetch(url, { cache:'no-store' });
     if (!r.ok) throw new Error(`Sheets HTTP ${r.status} (${tabName||'base'})`);
     const data = await r.json();
     if (!Array.isArray(data)) throw new Error(`Formato inválido em ${tabName||'base'}`);
+    // anota a origem (não impacta views)
     return data.map(row => ({ __tab: tabName || 'base', ...row }));
   };
 
   try{
     let datasets = [];
+    // tenta por abas; se der erro geral, cai no catch/seed
     if (Array.isArray(SHEETS_TABS) && SHEETS_TABS.length){
       const parts = await Promise.allSettled(SHEETS_TABS.map(fetchTab));
       for (const p of parts){
         if (p.status === 'fulfilled') datasets = datasets.concat(p.value);
         else console.warn('Aba falhou (ignorada):', p.reason?.message || p.reason);
       }
+      // fallback: se todas as abas falharam, tenta a base sem tab
       if (datasets.length === 0){
         console.warn('Nenhuma aba retornou dados. Tentando base sem ?tab=');
         datasets = await fetchTab(null);
       }
     } else {
+      // não há abas definidas: usa base
       datasets = await fetchTab(null);
     }
+
     console.log('Sheets OK (linhas totais):', datasets.length);
     return datasets;
   }catch(e){
@@ -216,28 +240,39 @@ export const Store = {
         const cinturaN  = toNum(pickByRegex(o, [/\bcintura\b/]));
         const quadrilN  = toNum(pickByRegex(o, [/\bquadril\b/]));
         const alturaRaw = toNum(pickByRegex(o, [/\baltura\b/, /\bestatura\b/, /\baltura \(cm\)\b/, /\bheight\b/]));
+        // altura em cm; se vier em metros (<=3), converte pra cm
         const alturaN   = (typeof alturaRaw === 'number' && alturaRaw <= 3) ? alturaRaw*100 : alturaRaw;
 
+        // Abdômen (todas as formas comuns)
         const abdomenN  = toNum(pickByRegex(o, [
           /\babdome\b/, /\babdomen\b/, /\babdomem\b/, /\babdominal\b/,
           /perimetro abdominal/, /circunferencia abdominal/
         ]));
 
-        const pescocoN  = toNum(pickByRegex(o, [/\bpesco[cç]o\b/, /circunferencia do pescoco/]));
+        // Pescoço (para %G)
+        const pescocoN  = toNum(pickByRegex(o, [
+          /\bpesco[cç]o\b/, /circunferencia do pescoco/
+        ]));
 
+        // Sexo / gênero (para %G)
         const sexoRaw = pickByRegex(o, [/\bsexo\b/, /\bg[êe]nero\b/, /sexo biolog/i]);
         const sx = String(sexoRaw || '').toLowerCase();
         const isMale   = /\b(m|masc|masculino|homem|male)\b/.test(sx);
-        const sexoNorm = isMale ? 'M' : 'F';
+        const isFemale = /\b(f|fem|feminino|mulher|female)\b/.test(sx);
+        const sexoNorm = isMale ? 'M' : 'F'; // padrão feminino se indefinido
 
         // RCQ / WHtR
         const rcqCalc   = (Number.isFinite(cinturaN) && Number.isFinite(quadrilN) && quadrilN !== 0) ? (cinturaN / quadrilN) : undefined;
         const whtrCalc  = (Number.isFinite(cinturaN) && Number.isFinite(alturaN)  && alturaN  !== 0) ? (cinturaN / alturaN)  : undefined;
 
-        // %G do Forms com fallback Marinha EUA
+        // %G do Forms (direto), com fallback no cálculo da Marinha EUA  —— PATCH
         const bodyfatForm = toNum(pickByRegex(o, [
-          /^%?\s*g$/, /\bpercentual.*gordura\b/, /\bgordura.*corporal\b/,
-          /\bbf%?\b/, /\bbody\s*fat\b/, /\bbodyfat\b/
+          /^%?\s*g$/,                       // "%G" ou "g"
+          /\bpercentual.*gordura\b/,        // "percentual de gordura"
+          /\bgordura.*corporal\b/,          // "gordura corporal"
+          /\bbf%?\b/,                       // "BF" ou "BF%"
+          /\bbody\s*fat\b/,                 // "body fat"
+          /\bbodyfat\b/                     // "bodyfat"
         ]));
         const bodyfatCalc = navyBodyFat(sexoNorm, cinturaN, quadrilN, pescocoN, alturaN);
         const bodyfatFinal = Number.isFinite(bodyfatForm) ? bodyfatForm : (Number.isFinite(bodyfatCalc) ? bodyfatCalc : undefined);
@@ -270,10 +305,14 @@ export const Store = {
         };
 
         // --- Detecta Form do Professor (upgrade) ---
-        const novoNivelRaw = pick(o, ['novo_nivel','novonivel','nivel_novo','nivel aprovado','nivel_aprovado','nivel_definido']);
-        const aprovadoRaw  = pick(o, ['aprovado','aprovacao','aprovação','aprovacao_professor','ok','apto','apta']);
-        const dataDecRaw   = pick(o, ['data_decisao','data_upgrade','data_mudanca','data da decisao']);
-        const obsProf      = pick(o, ['observacao_professor','observacao','comentario']);
+        const novoNivelRaw = pick(o, [
+          'novo_nivel','novonivel','nivel_novo','nivel aprovado','nivel_aprovado','nivel_definido'
+        ]);
+        const aprovadoRaw = pick(o, [
+          'aprovado','aprovacao','aprovação','aprovacao_professor','ok','apto','apta'
+        ]);
+        const dataDecRaw  = pick(o, ['data_decisao','data_upgrade','data_mudanca','data da decisao']);
+        const obsProf     = pick(o, ['observacao_professor','observacao','comentario']);
 
         if (novoNivelRaw) {
           const aprovado = /^s(?!$)|^sim$|^ok$|^true$|^aprov/i.test(String(aprovadoRaw||''));
@@ -282,7 +321,7 @@ export const Store = {
           base._upgradeEvent = { aprovado, novoNivel, data: dataUp, obs: obsProf || '' };
         }
 
-        // --- Pontuação automática (fallback) ---
+        // --- Pontuação automática por respostas (fallback) ---
         if ((!pontForm || isNaN(pontForm)) && base._answers && Object.keys(base._answers).length){
           const auto = calcularPontuacao(base._answers);
           base.pontuacao = auto;
@@ -304,15 +343,16 @@ export const Store = {
             peso:    Number.isFinite(pesoN)        ? pesoN        : undefined,
             cintura: Number.isFinite(cinturaN)     ? cinturaN     : undefined,
             quadril: Number.isFinite(quadrilN)     ? quadrilN     : undefined,
-            altura:  Number.isFinite(alturaN)      ? alturaN      : undefined,
-            abdomen: Number.isFinite(abdomenN)     ? abdomenN     : undefined,
-            pescoco: Number.isFinite(pescocoN)     ? pescocoN     : undefined,
+            altura:  Number.isFinite(alturaN)      ? alturaN      : undefined,   // cm
+            abdomen: Number.isFinite(abdomenN)     ? abdomenN     : undefined,   // cm
+            pescoco: Number.isFinite(pescocoN)     ? pescocoN     : undefined,   // cm
             rcq:     Number.isFinite(rcqCalc)      ? rcqCalc      : undefined,
             whtr:    Number.isFinite(whtrCalc)     ? whtrCalc     : undefined,
-            bodyfat: Number.isFinite(bodyfatFinal) ? bodyfatFinal : undefined
+            bodyfat: Number.isFinite(bodyfatFinal) ? bodyfatFinal : undefined    // %G (Forms > cálculo)
           });
         }
 
+        // marca de origem (debug/inspeção; não usada em views)
         if (raw && raw.__tab) base.__tab = raw.__tab;
 
         return base;
@@ -332,6 +372,7 @@ export const Store = {
         }
       }
 
+      // ordena histórico + flags
       const list = [...map.values()];
       for (const c of list) {
         if (Array.isArray(c.avaliacoes)) {
@@ -390,6 +431,7 @@ export const Store = {
     this.persist();
   },
 
+  // Export/Import
   exportJSON(){
     try{
       const blob = new Blob([JSON.stringify(this.state.clientes, null, 2)], {type:'application/json'});
@@ -520,39 +562,7 @@ const routes = [
   { path: new RegExp('^#\\/relatorio\\/' + idRe + '$'),     view: RelatorioView },
 ];
 
-// ---------- Overlay de erro (diagnóstico) ----------
-function ensureErrorStyles(){
-  if (document.getElementById('bp-error-style')) return;
-  const s = document.createElement('style');
-  s.id = 'bp-error-style';
-  s.textContent = `
-  #bp-error { position:fixed; inset:0; background:rgba(0,0,0,.7); color:#fff; z-index:99999; display:none; }
-  #bp-error .card{ position:absolute; inset:auto 0 0 0; background:#1a1d22; border-top:2px solid #8e1f1b; padding:12px; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; max-height:48vh; overflow:auto; }
-  #bp-error .title{ font-weight:800; margin:0 0 6px; color:#ffb4ad; }
-  #bp-error .ctx{ color:#ffd86b; font-weight:600; }
-  #bp-error pre{ white-space:pre-wrap; margin:8px 0 0; }
-  #bp-error .close{ position:absolute; right:12px; top:8px; background:#8e1f1b; border:none; color:#fff; padding:6px 10px; border-radius:8px; cursor:pointer; }
-  `;
-  document.head.appendChild(s);
-}
-function showErrorOverlay(message, stack, context){
-  ensureErrorStyles();
-  let root = document.getElementById('bp-error');
-  if(!root){
-    root = document.createElement('div');
-    root.id = 'bp-error';
-    root.innerHTML = `<div class="card"><button class="close" id="bp-error-close">Fechar</button><div class="title">Falha na renderização da view <span class="ctx"></span></div><pre id="bp-error-text"></pre></div>`;
-    document.body.appendChild(root);
-    root.querySelector('#bp-error-close').addEventListener('click', ()=> root.style.display='none');
-  }
-  root.querySelector('.ctx').textContent = context || '';
-  root.querySelector('#bp-error-text').textContent = `${message}\n\n${stack || ''}`;
-  root.style.display = 'block';
-  console.error('BP View Error:', context, message, stack);
-}
-
-// ---------- Render com guard ----------
-async function _renderCore(){
+async function render(){
   const app  = document.getElementById('app');
   const hash = location.hash;
   let View = DashboardView, params = [];
@@ -562,16 +572,6 @@ async function _renderCore(){
   }
   app.innerHTML = await View.template(...params);
   if (View.init) await View.init(...params);
-}
-
-async function render(){
-  try{
-    ensureStylesInjected();
-    await _renderCore();
-    enhanceTables();
-  }catch(e){
-    showErrorOverlay(e?.message || 'Erro desconhecido', e?.stack || String(e), `route=${location.hash || '#/'}`);
-  }
 }
 
 /* =========================
@@ -627,6 +627,7 @@ html,body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,s
 
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
 `;
+
 function ensureStylesInjected(){
   if (document.getElementById('bp-mobile-style')) return;
   const s = document.createElement('style');
@@ -649,14 +650,14 @@ function enhanceTables(){
   });
 }
 
-// Eventos globais de erro (diagnóstico)
-window.addEventListener('error', (e)=>{
-  showErrorOverlay(e.message, e.error?.stack || '', 'window.error');
-});
-window.addEventListener('unhandledrejection', (e)=>{
-  const reason = e.reason || {};
-  showErrorOverlay(reason.message || String(reason), reason.stack || '', 'promise.unhandledrejection');
-});
+// Hook no render para aplicar o patch em todas as telas
+const _origRender = render;
+render = async function(){
+  ensureStylesInjected();
+  await _origRender();
+  enhanceTables();
+};
+ensureStylesInjected();
 
 // Eventos de rota
 window.addEventListener('hashchange', render);
