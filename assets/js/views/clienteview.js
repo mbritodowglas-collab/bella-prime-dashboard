@@ -209,6 +209,17 @@ function calcStatusTreino(t){
   return 'Vencido';
 }
 
+// ---------- helpers de timing p/ Chart ----------
+function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+async function waitForChart(maxTries=30){
+  for (let i=0;i<maxTries;i++){
+    if (window.Chart && typeof window.Chart === 'function') return true;
+    await sleep(120);
+  }
+  console.warn('Chart.js não ficou disponível a tempo.');
+  return false;
+}
+
 // ============== VIEW ==============
 export const ClienteView = {
   async template(id){
@@ -423,6 +434,41 @@ export const ClienteView = {
         <small style="opacity:.75">Circunferências vêm das avaliações; peso/altura/pescoço priorizam a avaliação e só caem para FR1/FR2 se estiverem ausentes.</small>
       </section>
 
+      <!-- GRÁFICOS -->
+      <section class="card chart-card">
+        <h3>Evolução do Peso (kg)</h3>
+        <div id="pesoEmpty" style="display:none;color:#aaa">Sem dados de peso suficientes.</div>
+        <canvas id="chartPeso" height="160" style="width:100%;height:240px;display:block"></canvas>
+      </section>
+
+      <section class="card chart-card">
+        <div class="row" style="justify-content:space-between;align-items:flex-end;">
+          <h3 style="margin:0">Relação Cintura/Quadril (RCQ)</h3>
+          <small style="opacity:.85">alvo (mulheres): ≲ 0,85</small>
+        </div>
+        <div id="rcqEmpty" style="display:none;color:#aaa">Sem dados de cintura/quadril suficientes.</div>
+        <canvas id="chartRCQ" height="160" style="width:100%;height:240px;display:block"></canvas>
+      </section>
+
+      <section class="card chart-card">
+        <div class="row" style="justify-content:space-between;align-items:flex-end;">
+          <h3 style="margin:0">RCE (cintura/estatura)</h3>
+          <small style="opacity:.85">regra de bolso: manter &lt; 0,50</small>
+        </div>
+        <div id="rceEmpty" style="display:none;color:#aaa">Sem dados de cintura/estatura suficientes.</div>
+        <canvas id="chartRCE" height="160" style="width:100%;height:240px;display:block"></canvas>
+        <small style="opacity:.75">Linha guia 0,50 = cintura menor que metade da altura.</small>
+      </section>
+
+      <section class="card chart-card">
+        <div class="row" style="justify-content:space-between;align-items:flex-end;">
+          <h3 style="margin:0">%G (Protocolo Marinha EUA)</h3>
+          <small style="opacity:.85">Usa valor do Forms ou estimativa (altura, pescoço, cintura, quadril).</small>
+        </div>
+        <div id="bfEmpty" style="display:none;color:#aaa">Sem dados de %G suficientes.</div>
+        <canvas id="chartBF" height="160" style="width:100%;height:240px;display:block"></canvas>
+      </section>
+
       <section class="card">
         <div class="row" style="justify-content:space-between;align-items:center;gap:10px">
           <h3 style="margin:0">Treinos Registrados</h3>
@@ -441,41 +487,6 @@ export const ClienteView = {
       </section>
 
       ${blocoRespostas}
-
-      <!-- GRÁFICOS -->
-      <section class="card chart-card">
-        <h3>Evolução do Peso (kg)</h3>
-        <div id="pesoEmpty" style="display:none;color:#aaa">Sem dados de peso suficientes.</div>
-        <canvas id="chartPeso" height="160"></canvas>
-      </section>
-
-      <section class="card chart-card">
-        <div class="row" style="justify-content:space-between;align-items:flex-end;">
-          <h3 style="margin:0">Relação Cintura/Quadril (RCQ)</h3>
-          <small style="opacity:.85">alvo (mulheres): ≲ 0,85</small>
-        </div>
-        <div id="rcqEmpty" style="display:none;color:#aaa">Sem dados de cintura/quadril suficientes.</div>
-        <canvas id="chartRCQ" height="160"></canvas>
-      </section>
-
-      <section class="card chart-card">
-        <div class="row" style="justify-content:space-between;align-items:flex-end;">
-          <h3 style="margin:0">RCE (cintura/estatura)</h3>
-          <small style="opacity:.85">regra de bolso: manter &lt; 0,50</small>
-        </div>
-        <div id="rceEmpty" style="display:none;color:#aaa">Sem dados de cintura/estatura suficientes.</div>
-        <canvas id="chartRCE" height="160"></canvas>
-        <small style="opacity:.75">Linha guia 0,50 = cintura menor que metade da altura.</small>
-      </section>
-
-      <section class="card chart-card">
-        <div class="row" style="justify-content:space-between;align-items:flex-end;">
-          <h3 style="margin:0">%G (Protocolo Marinha EUA)</h3>
-          <small style="opacity:.85">Usa valor do Forms ou estimativa (altura, pescoço, cintura, quadril).</small>
-        </div>
-        <div id="bfEmpty" style="display:none;color:#aaa">Sem dados de %G suficientes.</div>
-        <canvas id="chartBF" height="160"></canvas>
-      </section>
 
       <!-- Modal de Mensagens Rápidas (conteúdo igual ao seu atual) -->
       <div class="modal-backdrop" id="msgBackdrop"></div>
@@ -509,9 +520,11 @@ export const ClienteView = {
       });
     }
 
-    // ========== Gráficos ==========
-    if (typeof window.Chart !== 'function') return;
+    // ======= Aguarda o Chart.js estar disponível =======
+    const ok = await waitForChart();
+    if (!ok) return;
 
+    // ========== Gráficos ==========
     // Peso — PRIORIDADE avaliação; depois FR1/FR2; com validação numérica
     const pesoCtx = document.getElementById('chartPeso');
     const pesoEmpty = document.getElementById('pesoEmpty');
@@ -543,6 +556,7 @@ export const ClienteView = {
         },
         options: { responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:false } } }
       });
+      setTimeout(()=>{ try{ pesoChart && pesoChart.resize(); }catch{} }, 0);
       if (pesoEmpty) pesoEmpty.style.display = 'none';
     } else if (pesoEmpty) { pesoEmpty.style.display = 'block'; }
 
@@ -567,6 +581,7 @@ export const ClienteView = {
         },
         options: { responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:false } } }
       });
+      setTimeout(()=>{ try{ rcqChart && rcqChart.resize(); }catch{} }, 0);
       if (rcqEmpty) rcqEmpty.style.display = 'none';
     } else if (rcqEmpty) { rcqEmpty.style.display = 'block'; }
 
@@ -594,6 +609,7 @@ export const ClienteView = {
         options: { responsive:true, plugins:{ legend:{ display:false } },
           scales:{ y:{ beginAtZero:false, suggestedMin:0.35, suggestedMax:0.75 } } }
       });
+      setTimeout(()=>{ try{ rceChart && rceChart.resize(); }catch{} }, 0);
       if (rceEmpty) rceEmpty.style.display = 'none';
     } else if (rceEmpty) { rceEmpty.style.display = 'block'; }
 
@@ -628,16 +644,25 @@ export const ClienteView = {
         },
         options: { responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:false } } }
       });
+      setTimeout(()=>{ try{ bfChart && bfChart.resize(); }catch{} }, 0);
       if (bfEmpty) bfEmpty.style.display = 'none';
     } else if (bfEmpty) { bfEmpty.style.display = 'block'; }
+
+    // Reagir a mudanças de viewport
+    window.addEventListener('resize', ()=>{
+      try{ pesoChart && pesoChart.resize(); }catch{}
+      try{ rcqChart  && rcqChart.resize(); }catch{}
+      try{ rceChart  && rceChart.resize(); }catch{}
+      try{ bfChart   && bfChart.resize(); }catch{}
+    }, { passive:true });
 
     // Excluir treino
     document.querySelectorAll('.btn-del-treino').forEach(btn => {
       btn.addEventListener('click', () => {
         const tid = btn.getAttribute('data-treino');
         if (!tid) return;
-        const ok = confirm('Remover este treino? Esta ação não pode ser desfeita.');
-        if (!ok) return;
+        const ok2 = confirm('Remover este treino? Esta ação não pode ser desfeita.');
+        if (!ok2) return;
         const cli = Store.byId(id);
         if (!cli || !Array.isArray(cli.treinos)) return;
         cli.treinos = cli.treinos.filter(t => String(t.id) !== String(tid));
