@@ -1,5 +1,5 @@
 // ================================
-// VIEW: Perfil da Cliente (atualizado com %G, RCE e fallbacks de FR1/FR2)
+// VIEW: Perfil da Cliente (com %G, RCE e fallbacks FR1/FR2 + scan profundo)
 // ================================
 import { Store, PROFESSOR_FORM_URL } from '../app.js';
 
@@ -37,24 +37,68 @@ function pick(obj, keys){
   return undefined;
 }
 
-// ---------- unificar respostas (FR1/FR2) ----------
+// ---------- normalização para fuzzy ----------
+function norm(s){
+  return String(s || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .toLowerCase().trim();
+}
+
+// varredura profunda: coleta pares "chave -> valor" com cara de respostas
+function collectAnswerLikePairs(root, maxDepth=4){
+  const bag = {};
+  const seen = new WeakSet();
+  function walk(obj, depth){
+    if (!obj || typeof obj !== 'object' || seen.has(obj) || depth > maxDepth) return;
+    seen.add(obj);
+    for (const [k,v] of Object.entries(obj)){
+      if (/^(__|id$|nome$|treinos$|avaliacoes$|email$|contato$|cidade$)/i.test(k)) continue;
+      if (v != null && (typeof v === 'string' || typeof v === 'number')){
+        if (/[a-zA-Z]/.test(k)) {
+          if (!(k in bag)) bag[k] = v;
+        }
+      } else if (v && typeof v === 'object'){
+        walk(v, depth+1);
+      }
+    }
+  }
+  walk(root, 0);
+  return bag;
+}
+
+// ---------- unificar respostas (FR1/FR2 + scan profundo) ----------
 function mergedAnswers(cliente){
   const pools = [];
-  if (cliente?._answers) pools.push(cliente._answers);   // FR1
-  if (cliente?._answers2) pools.push(cliente._answers2); // FR2 (se houver)
-  if (cliente?.answers2)  pools.push(cliente.answers2);  // variações
+  if (cliente?._answers)  pools.push(cliente._answers);   // FR1
+  if (cliente?._answers2) pools.push(cliente._answers2);  // FR2 (se houver)
+  if (cliente?.answers2)  pools.push(cliente.answers2);   // variações
   if (cliente?.forms && typeof cliente.forms === 'object'){
     for (const [k,v] of Object.entries(cliente.forms)){
       if (v && typeof v === 'object' && /(form|responses|fr)\s*2/i.test(k)) pools.push(v);
     }
   }
+  // fallback: varredura profunda em todo o objeto do cliente
+  pools.push(collectAnswerLikePairs(cliente));
   return Object.assign({}, ...pools);
 }
+
 function pickFromAny(cliente, aval, keys){
   const m = mergedAnswers(cliente);
   for (const k of keys){
     if (m?.[k] != null && String(m[k]).trim() !== '') return m[k];
     if (aval?.[k] != null && String(aval[k]).trim() !== '') return aval[k];
+  }
+  return undefined;
+}
+
+// fuzzy nas chaves combinadas
+function pickFuzzyFromAnswers(cliente, regexList){
+  const pool = mergedAnswers(cliente);
+  for (const [k,v] of Object.entries(pool)){
+    const nk = norm(k);
+    for (const rx of regexList){
+      if (rx.test(nk) && v != null && String(v).trim() !== '') return v;
+    }
   }
   return undefined;
 }
@@ -74,15 +118,17 @@ function parseLengthCm(raw){
   return val <= 3 ? val * 100 : val; // sem unidade: ≤3 supõe metros
 }
 
-// altura/pescoço com fallback FR1/FR2
+// altura/pescoço com fallback FR1/FR2 + fuzzy
 function getAlturaFrom(cliente, aval){
   const v = pickFromAny(cliente, aval,
-    ['altura','Altura','Altura (cm)','altura_cm','Altura (m)','altura_m','estatura','Estatura (cm)']);
+    ['altura','Altura','Altura (cm)','altura_cm','Altura (m)','altura_m','estatura','Estatura (cm)'])
+    ?? pickFuzzyFromAnswers(cliente, [/^altura(\s|\(|$)/, /estatura/, /altura.*(cm|m)/]);
   return parseLengthCm(v);
 }
 function getPescocoFrom(cliente, aval){
   const v = pickFromAny(cliente, aval,
-    ['pescoco','pescoço','Pescoço','Pescoço (cm)','pescoco_cm','circ_pescoco','Circunferência do Pescoço']);
+    ['pescoco','pescoço','Pescoço','Pescoço (cm)','pescoco_cm','circ_pescoco','Circunferência do Pescoço'])
+    ?? pickFuzzyFromAnswers(cliente, [/pescoc/, /circ.*pescoc/]); // "pescoço" sem acento vira "pescoc"
   return parseLengthCm(v);
 }
 
@@ -151,12 +197,15 @@ export const ClienteView = {
 
     // ---- MÉTRICAS COM FALLBACK (peso/altura/pescoço) ----
     const pesoRaw     = pickFromAny(c, ultimaAval,
-      ['peso','Peso','Peso (kg)','peso (kg)','peso_kg','Qual é o seu peso?']);
+      ['peso','Peso','Peso (kg)','peso (kg)','peso_kg','Qual é o seu peso?'])
+      ?? pickFuzzyFromAnswers(c, [/^peso(\s|\(|$)/, /peso.*kg/]);
+
     const cinturaRaw  = pick(ultimaAval, ["cintura","Cintura (cm)","cintura_cm"]);
     const quadrilRaw  = pick(ultimaAval, ["quadril","Quadril (cm)","quadril_cm"]);
     const abdomeRaw   = pick(ultimaAval, [
       "abdomen","abdome","abdomem","abdominal","abdomen_cm","abdome_cm","Abdome (cm)","Abdomen (cm)"
     ]);
+
     const alturaCm    = getAlturaFrom(c, ultimaAval);
     const pescocoCm   = getPescocoFrom(c, ultimaAval);
 
@@ -369,7 +418,7 @@ export const ClienteView = {
       <section class="card chart-card">
         <div class="row" style="justify-content:space-between;align-items:flex-end;">
           <h3 style="margin:0">RCE (cintura/estatura)</h3>
-          <small style="opacity:.85">regra de bolso: manter &lt; 0,50</small>
+        <small style="opacity:.85">regra de bolso: manter &lt; 0,50</small>
         </div>
         <div id="rceEmpty" style="display:none;color:#aaa">Sem dados de cintura/estatura suficientes.</div>
         <canvas id="chartRCE" height="160"></canvas>
@@ -420,12 +469,13 @@ export const ClienteView = {
     // ========== Gráficos ==========
     if (typeof window.Chart !== 'function') return;
 
-    // Peso — aceita fallback do FR1/FR2 para cada avaliação
+    // Peso — aceita fallback + fuzzy do FR1/FR2 para cada avaliação
     const pesoCtx = document.getElementById('chartPeso');
     const pesoEmpty = document.getElementById('pesoEmpty');
     const seriePeso = (c.avaliacoes || [])
       .map(a => {
-        const p = pickFromAny(c, a, ['peso','Peso','Peso (kg)','peso (kg)','peso_kg','Qual é o seu peso?']);
+        const p = pickFromAny(c, a, ['peso','Peso','Peso (kg)','peso (kg)','peso_kg','Qual é o seu peso?'])
+              ?? pickFuzzyFromAnswers(c, [/^peso(\s|\(|$)/, /peso.*kg/]);
         const pn = parseNumber(p);
         return { ...a, pesoNum: Number.isFinite(pn) ? pn : undefined };
       })
@@ -551,3 +601,5 @@ export const ClienteView = {
     });
   }
 };
+
+export default ClienteView;
