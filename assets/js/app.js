@@ -14,9 +14,9 @@ const SHEETS_API = 'https://script.google.com/macros/s/AKfycbyTQxy-R22hFvEtLrBPf
 // Se o seu Apps Script aceita ?tab=<nome_da_aba>, declare aqui as abas a ler.
 // Mantém compatível: se alguma aba não existir, ignora e segue.
 const SHEETS_TABS = [
-  'avaliacao',
-  'reavaliacao',
-  'professor'
+  'Form Responses 1',
+  'Form Responses 2',
+  'Form Responses 3'
 ];
 
 // Branding (lido pelo RelatorioView via import dinâmico)
@@ -154,15 +154,27 @@ function collectAnswersFromRaw(raw){
 
 // ---------- Dados (Sheets -> seed.json) ----------
 async function loadSeed(){
-  // helper: busca uma aba específica (ou base sem tab)
+  // helper: busca uma aba específica (ou base sem tab/sheet)
   const fetchTab = async (tabName) => {
-    const url = tabName ? `${SHEETS_API}?tab=${encodeURIComponent(tabName)}` : SHEETS_API;
-    const r = await fetch(url, { cache:'no-store' });
-    if (!r.ok) throw new Error(`Sheets HTTP ${r.status} (${tabName||'base'})`);
-    const data = await r.json();
-    if (!Array.isArray(data)) throw new Error(`Formato inválido em ${tabName||'base'}`);
-    // anota a origem (não impacta views)
-    return data.map(row => ({ __tab: tabName || 'base', ...row }));
+    const urls = tabName
+      ? [
+          `${SHEETS_API}?tab=${encodeURIComponent(tabName)}`,
+          `${SHEETS_API}?sheet=${encodeURIComponent(tabName)}`
+        ]
+      : [SHEETS_API];
+
+    let lastErr;
+    for (const url of urls){
+      try{
+        const r = await fetch(url, { cache:'no-store' });
+        if (!r.ok) throw new Error(`Sheets HTTP ${r.status} (${url})`);
+        const data = await r.json();
+        if (!Array.isArray(data)) throw new Error(`Formato inválido (${url})`);
+        // anota a origem (não impacta views)
+        return data.map(row => ({ __tab: tabName || 'base', ...row }));
+      }catch(e){ lastErr = e; }
+    }
+    throw lastErr || new Error('Falha em todas as URLs');
   };
 
   try{
@@ -174,7 +186,7 @@ async function loadSeed(){
         if (p.status === 'fulfilled') datasets = datasets.concat(p.value);
         else console.warn('Aba falhou (ignorada):', p.reason?.message || p.reason);
       }
-      // fallback: se todas as abas falharam, tenta a base sem tab
+      // fallback: se todas as abas falharam, tenta a base sem ?tab=
       if (datasets.length === 0){
         console.warn('Nenhuma aba retornou dados. Tentando base sem ?tab=');
         datasets = await fetchTab(null);
