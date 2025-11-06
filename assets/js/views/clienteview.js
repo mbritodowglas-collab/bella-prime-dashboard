@@ -101,7 +101,7 @@ function pickFuzzyFromAnswers(cliente, regexList){
   return undefined;
 }
 
-// === NOVO: fuzzy direto em QUALQUER objeto (ex.: ultimaAval) ===
+// === fuzzy direto em QUALQUER objeto (ex.: ultimaAval) ===
 function pickFuzzyFromObject(obj, regexList){
   if (!obj || typeof obj !== 'object') return undefined;
   for (const [k,v] of Object.entries(obj)){
@@ -110,6 +110,30 @@ function pickFuzzyFromObject(obj, regexList){
       if (rx.test(nk) && v != null && String(v).trim() !== '') return v;
     }
   }
+  return undefined;
+}
+
+// ---------- helpers numéricos com prioridade para a AVALIAÇÃO ----------
+function pickNumericPreferAval(aval, cliente, exactKeys = [], fuzzyPatterns = []) {
+  // 1) tentar chaves exatas dentro da AVALIAÇÃO
+  for (const k of exactKeys) {
+    const v = aval?.[k];
+    if (v != null && String(v).trim() !== '' && Number.isFinite(parseNumber(v))) return v;
+  }
+  // 2) fuzzy dentro da AVALIAÇÃO
+  const fvA = pickFuzzyFromObject(aval, fuzzyPatterns);
+  if (fvA != null && Number.isFinite(parseNumber(fvA))) return fvA;
+
+  // 3) chaves exatas nas RESPOSTAS (FR1/FR2/scan)
+  const pool = mergedAnswers(cliente);
+  for (const k of exactKeys) {
+    const v = pool?.[k];
+    if (v != null && String(v).trim() !== '' && Number.isFinite(parseNumber(v))) return v;
+  }
+  // 4) fuzzy nas RESPOSTAS
+  const fvR = pickFuzzyFromAnswers(cliente, fuzzyPatterns);
+  if (fvR != null && Number.isFinite(parseNumber(fvR))) return fvR;
+
   return undefined;
 }
 
@@ -128,33 +152,23 @@ function parseLengthCm(raw){
   return val <= 3 ? val * 100 : val; // sem unidade: ≤3 supõe metros
 }
 
-// ---------- altura/pescoço com fallback FR1/FR2 + fuzzy (respostas e ultimaAval) ----------
+// ---------- altura/pescoço com prioridade para AVALIAÇÃO e fallback FR1/FR2 ----------
 function getAlturaFrom(cliente, aval){
-  const v =
-    // chaves exatas usuais
-    pickFromAny(cliente, aval, [
-      'altura','Altura','Altura (cm)','altura_cm','Altura (m)','altura_m','estatura','Estatura (cm)'
-    ])
-    // fuzzy nas respostas (FR1/FR2/scan)
-    ?? pickFuzzyFromAnswers(cliente, [/^altura(\s|\(|$)/, /estatura/, /altura.*(cm|m)/])
-    // fuzzy direto na própria avaliação
-    ?? pickFuzzyFromObject(aval, [/^altura(\s|\(|$)/, /estatura/, /altura.*(cm|m)/]);
-
-  return parseLengthCm(v);
+  const raw = pickNumericPreferAval(
+    aval, cliente,
+    ['altura','Altura','Altura (cm)','altura_cm','Altura (m)','altura_m','estatura','Estatura (cm)'],
+    [/^altura(\s|\(|$)/, /estatura/, /altura.*(cm|m)/]
+  );
+  return parseLengthCm(raw);
 }
 
 function getPescocoFrom(cliente, aval){
-  const v =
-    // chaves exatas usuais
-    pickFromAny(cliente, aval, [
-      'pescoco','pescoço','Pescoço','Pescoço (cm)','pescoco_cm','circ_pescoco','Circunferência do Pescoço'
-    ])
-    // fuzzy nas respostas
-    ?? pickFuzzyFromAnswers(cliente, [/pescoc/, /circ.*pescoc/])
-    // fuzzy direto na avaliação (pega “Pescoço (CM)”, espaços extras, etc.)
-    ?? pickFuzzyFromObject(aval, [/pescoc/, /circ.*pescoc/]);
-
-  return parseLengthCm(v);
+  const raw = pickNumericPreferAval(
+    aval, cliente,
+    ['pescoco','pescoço','Pescoço','Pescoço (cm)','pescoco_cm','circ_pescoco','Circunferência do Pescoço'],
+    [/pescoc/, /circ.*pescoc/]
+  );
+  return parseLengthCm(raw);
 }
 
 // RCQ direto a partir da avaliação
@@ -222,10 +236,11 @@ export const ClienteView = {
       .pop() || {};
 
     // ---- MÉTRICAS COM FALLBACK (peso/altura/pescoço) ----
-    const pesoRaw = (
-      pickFromAny(c, ultimaAval, ['peso','Peso','Peso (kg)','peso (kg)','peso_kg','Qual é o seu peso?'])
-      ?? pickFuzzyFromAnswers(c, [/^peso(\s|\(|$)/, /peso.*kg/])
-      ?? pickFuzzyFromObject(ultimaAval, [/^peso(\s|\(|$)/, /peso.*kg/, /^kg$/])
+    // Peso: PRIORIDADE avaliação → fuzzy na avaliação → FR1/FR2 (com validação numérica)
+    const pesoRaw = pickNumericPreferAval(
+      ultimaAval, c,
+      ['peso','Peso','Peso (kg)','peso (kg)','peso_kg','Qual é o seu peso?'],
+      [/^peso(\s|\(|$)/, /peso.*kg/, /^kg$/]
     );
 
     const cinturaRaw  = pick(ultimaAval, ["cintura","Cintura (cm)","cintura_cm"]);
@@ -405,7 +420,7 @@ export const ClienteView = {
             </tbody>
           </table>
         </div>
-        <small style="opacity:.75">Circunferências vêm das avaliações; peso/altura/pescoço podem vir das respostas (FR1/FR2) para estimar RCE e %G.</small>
+        <small style="opacity:.75">Circunferências vêm das avaliações; peso/altura/pescoço priorizam a avaliação e só caem para FR1/FR2 se estiverem ausentes.</small>
       </section>
 
       <section class="card">
@@ -456,7 +471,7 @@ export const ClienteView = {
       <section class="card chart-card">
         <div class="row" style="justify-content:space-between;align-items:flex-end;">
           <h3 style="margin:0">%G (Protocolo Marinha EUA)</h3>
-        <small style="opacity:.85">Usa valor do Forms ou estimativa (altura, pescoço, cintura, quadril).</small>
+          <small style="opacity:.85">Usa valor do Forms ou estimativa (altura, pescoço, cintura, quadril).</small>
         </div>
         <div id="bfEmpty" style="display:none;color:#aaa">Sem dados de %G suficientes.</div>
         <canvas id="chartBF" height="160"></canvas>
@@ -497,15 +512,16 @@ export const ClienteView = {
     // ========== Gráficos ==========
     if (typeof window.Chart !== 'function') return;
 
-    // Peso — aceita fallback + fuzzy do FR1/FR2 e fuzzy na própria avaliação
+    // Peso — PRIORIDADE avaliação; depois FR1/FR2; com validação numérica
     const pesoCtx = document.getElementById('chartPeso');
     const pesoEmpty = document.getElementById('pesoEmpty');
     const seriePeso = (c.avaliacoes || [])
       .map(a => {
-        const p =
-          pickFromAny(c, a, ['peso','Peso','Peso (kg)','peso (kg)','peso_kg','Qual é o seu peso?'])
-          ?? pickFuzzyFromAnswers(c, [/^peso(\s|\(|$)/, /peso.*kg/])
-          ?? pickFuzzyFromObject(a, [/^peso(\s|\(|$)/, /peso.*kg/, /^kg$/]);
+        const p = pickNumericPreferAval(
+          a, c,
+          ['peso','Peso','Peso (kg)','peso (kg)','peso_kg','Qual é o seu peso?'],
+          [/^peso(\s|\(|$)/, /peso.*kg/, /^kg$/]
+        );
         const pn = parseNumber(p);
         return { ...a, pesoNum: Number.isFinite(pn) ? pn : undefined };
       })
