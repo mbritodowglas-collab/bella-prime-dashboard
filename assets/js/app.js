@@ -9,7 +9,7 @@ import { TreinoView }    from './views/treinoview.js';
 import { RelatorioView } from './views/relatorioview.js';
 
 // ---------- Config gerais ----------
-const SHEETS_API = 'https://script.google.com/macros/s/AKfycbyAafbpJDWr4RF9hdTkzmnLLv1Ge258hk6jlnDo7ng2kk88GoWyJzp63rHZPMDJA-wy/exec';
+const SHEETS_API = 'https://script.google.com/macros/s/AKfycbyTQxy-R22hFvEtLrBPf70qFuouXBPNCNZP87StBK_fNvIjQlvmB2Dy77pooPECwekr/exec';
 
 // Se o seu Apps Script aceita ?tab=<nome_da_aba>, declare aqui as abas a ler.
 // Mantém compatível: se alguma aba não existir, ignora e segue.
