@@ -1,5 +1,5 @@
 // ================================
-// VIEW: Perfil da Cliente (com %G, RCE e fallbacks FR1/FR2 + scan profundo)
+// VIEW: Perfil da Cliente (com %G, RCE e fallbacks FR1/FR2 + scan profundo + fuzzy em ultimaAval)
 // ================================
 import { Store, PROFESSOR_FORM_URL } from '../app.js';
 
@@ -44,7 +44,7 @@ function norm(s){
     .toLowerCase().trim();
 }
 
-// varredura profunda: coleta pares "chave -> valor" com cara de respostas
+// ---------- varredura profunda: “respostas” espalhadas ----------
 function collectAnswerLikePairs(root, maxDepth=4){
   const bag = {};
   const seen = new WeakSet();
@@ -54,9 +54,7 @@ function collectAnswerLikePairs(root, maxDepth=4){
     for (const [k,v] of Object.entries(obj)){
       if (/^(__|id$|nome$|treinos$|avaliacoes$|email$|contato$|cidade$)/i.test(k)) continue;
       if (v != null && (typeof v === 'string' || typeof v === 'number')){
-        if (/[a-zA-Z]/.test(k)) {
-          if (!(k in bag)) bag[k] = v;
-        }
+        if (/[a-zA-Z]/.test(k)) if (!(k in bag)) bag[k] = v;
       } else if (v && typeof v === 'object'){
         walk(v, depth+1);
       }
@@ -91,10 +89,22 @@ function pickFromAny(cliente, aval, keys){
   return undefined;
 }
 
-// fuzzy nas chaves combinadas
+// fuzzy nas chaves combinadas (pool de respostas)
 function pickFuzzyFromAnswers(cliente, regexList){
   const pool = mergedAnswers(cliente);
   for (const [k,v] of Object.entries(pool)){
+    const nk = norm(k);
+    for (const rx of regexList){
+      if (rx.test(nk) && v != null && String(v).trim() !== '') return v;
+    }
+  }
+  return undefined;
+}
+
+// === NOVO: fuzzy direto em QUALQUER objeto (ex.: ultimaAval) ===
+function pickFuzzyFromObject(obj, regexList){
+  if (!obj || typeof obj !== 'object') return undefined;
+  for (const [k,v] of Object.entries(obj)){
     const nk = norm(k);
     for (const rx of regexList){
       if (rx.test(nk) && v != null && String(v).trim() !== '') return v;
@@ -118,17 +128,32 @@ function parseLengthCm(raw){
   return val <= 3 ? val * 100 : val; // sem unidade: ≤3 supõe metros
 }
 
-// altura/pescoço com fallback FR1/FR2 + fuzzy
+// ---------- altura/pescoço com fallback FR1/FR2 + fuzzy (respostas e ultimaAval) ----------
 function getAlturaFrom(cliente, aval){
-  const v = pickFromAny(cliente, aval,
-    ['altura','Altura','Altura (cm)','altura_cm','Altura (m)','altura_m','estatura','Estatura (cm)'])
-    ?? pickFuzzyFromAnswers(cliente, [/^altura(\s|\(|$)/, /estatura/, /altura.*(cm|m)/]);
+  const v =
+    // chaves exatas usuais
+    pickFromAny(cliente, aval, [
+      'altura','Altura','Altura (cm)','altura_cm','Altura (m)','altura_m','estatura','Estatura (cm)'
+    ])
+    // fuzzy nas respostas (FR1/FR2/scan)
+    ?? pickFuzzyFromAnswers(cliente, [/^altura(\s|\(|$)/, /estatura/, /altura.*(cm|m)/])
+    // fuzzy direto na própria avaliação
+    ?? pickFuzzyFromObject(aval, [/^altura(\s|\(|$)/, /estatura/, /altura.*(cm|m)/]);
+
   return parseLengthCm(v);
 }
+
 function getPescocoFrom(cliente, aval){
-  const v = pickFromAny(cliente, aval,
-    ['pescoco','pescoço','Pescoço','Pescoço (cm)','pescoco_cm','circ_pescoco','Circunferência do Pescoço'])
-    ?? pickFuzzyFromAnswers(cliente, [/pescoc/, /circ.*pescoc/]); // "pescoço" sem acento vira "pescoc"
+  const v =
+    // chaves exatas usuais
+    pickFromAny(cliente, aval, [
+      'pescoco','pescoço','Pescoço','Pescoço (cm)','pescoco_cm','circ_pescoco','Circunferência do Pescoço'
+    ])
+    // fuzzy nas respostas
+    ?? pickFuzzyFromAnswers(cliente, [/pescoc/, /circ.*pescoc/])
+    // fuzzy direto na avaliação (pega “Pescoço (CM)”, espaços extras, etc.)
+    ?? pickFuzzyFromObject(aval, [/pescoc/, /circ.*pescoc/]);
+
   return parseLengthCm(v);
 }
 
@@ -138,6 +163,7 @@ function calcRCQ(a){
   const q = parseNumber(a?.quadril);
   return (Number.isFinite(c) && Number.isFinite(q) && q !== 0) ? (c/q) : undefined;
 }
+
 // RCE usando altura via fallback
 function calcRCEWithFallback(cliente, a){
   const c = parseNumber(a?.cintura);
@@ -418,7 +444,7 @@ export const ClienteView = {
       <section class="card chart-card">
         <div class="row" style="justify-content:space-between;align-items:flex-end;">
           <h3 style="margin:0">RCE (cintura/estatura)</h3>
-        <small style="opacity:.85">regra de bolso: manter &lt; 0,50</small>
+          <small style="opacity:.85">regra de bolso: manter &lt; 0,50</small>
         </div>
         <div id="rceEmpty" style="display:none;color:#aaa">Sem dados de cintura/estatura suficientes.</div>
         <canvas id="chartRCE" height="160"></canvas>
@@ -524,7 +550,7 @@ export const ClienteView = {
       if (rcqEmpty) rcqEmpty.style.display = 'none';
     } else if (rcqEmpty) { rcqEmpty.style.display = 'block'; }
 
-    // RCE (usa fallback de altura das respostas)
+    // RCE (usa fallback de altura das respostas/avaliacao)
     const rceCtx = document.getElementById('chartRCE');
     const rceEmpty = document.getElementById('rceEmpty');
     const serieRCE = (c.avaliacoes || [])
