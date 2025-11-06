@@ -1,5 +1,5 @@
 // ================================
-// VIEW: Relatório da Cliente (A4/print) — com gráficos e explicações
+// VIEW: Relatório da Cliente (A4/print) — com gráficos e explicações (versão com fallbacks)
 // ================================
 import { Store } from '../app.js';
 
@@ -13,12 +13,12 @@ let bfChart   = null;
 
 // -------- helpers base --------
 function esc(s){ return String(s || '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m])); }
-function nOrDash(v, d=0){ const n = parseNumber(v); return Number.isFinite(n) ? n.toFixed(d) : '-'; }
 function isNum(v){ return Number.isFinite(parseNumber(v)); }
-function pick(obj, keys){ for (const k of keys){ const val = obj?.[k]; if (val != null && String(val).trim() !== '') return val; } return undefined; }
+function nOrDash(v, d=0){ const n = parseNumber(v); return Number.isFinite(n) ? n.toFixed(d) : '-'; }
 function baseLineOptions(){ return { responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:false } } }; }
+function pick(obj, keys){ for (const k of keys){ const val = obj?.[k]; if (val != null && String(val).trim() !== '') return val; } return undefined; }
 
-// -------- parsing de medidas --------
+// -------- parsing / normalização --------
 function parseNumber(raw){
   if (raw == null) return undefined;
   const s = String(raw).replace(',', '.');
@@ -35,44 +35,118 @@ function parseLengthCm(raw){
   let val = Number(m[1]);
   const unit = (m[2] ? m[2].toLowerCase() : '');
   if (!Number.isFinite(val)) return undefined;
-  if (unit === 'm') return val * 100;
+  if (unit === 'm')  return val * 100;
   if (unit === 'mm') return val / 10;
   if (unit && unit !== 'm' && unit !== 'mm') return val; // cm
   return val <= 3 ? val * 100 : val;
 }
+function norm(s){
+  return String(s || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .toLowerCase().trim();
+}
 
-// buscar altura/pescoço em avaliação ou respostas
+// -------- varredura profunda + merge de respostas (FR1/FR2/outros) --------
+function collectAnswerLikePairs(root, maxDepth=4){
+  const bag = {};
+  const seen = new WeakSet();
+  function walk(obj, depth){
+    if (!obj || typeof obj !== 'object' || seen.has(obj) || depth > maxDepth) return;
+    seen.add(obj);
+    for (const [k,v] of Object.entries(obj)){
+      if (/^(__|id$|nome$|treinos$|avaliacoes$|email$|contato$|cidade$)/i.test(k)) continue;
+      if (v != null && (typeof v === 'string' || typeof v === 'number')){
+        if (/[a-zA-Z]/.test(k)) if (!(k in bag)) bag[k] = v;
+      } else if (v && typeof v === 'object'){
+        walk(v, depth+1);
+      }
+    }
+  }
+  walk(root, 0);
+  return bag;
+}
+function mergedAnswers(cliente){
+  const pools = [];
+  if (cliente?._answers)  pools.push(cliente._answers);
+  if (cliente?._answers2) pools.push(cliente._answers2);
+  if (cliente?.answers2)  pools.push(cliente.answers2);
+  if (cliente?.forms && typeof cliente.forms === 'object'){
+    for (const [k,v] of Object.entries(cliente.forms)){
+      if (v && typeof v === 'object' && /(form|responses|fr)\s*2/i.test(k)) pools.push(v);
+    }
+  }
+  pools.push(collectAnswerLikePairs(cliente));
+  return Object.assign({}, ...pools);
+}
+function pickFuzzyFromObject(obj, regexList){
+  if (!obj || typeof obj !== 'object') return undefined;
+  for (const [k,v] of Object.entries(obj)){
+    const nk = norm(k);
+    for (const rx of regexList){
+      if (rx.test(nk) && v != null && String(v).trim() !== '') return v;
+    }
+  }
+  return undefined;
+}
+function pickFuzzyFromAnswers(cliente, regexList){
+  const pool = mergedAnswers(cliente);
+  for (const [k,v] of Object.entries(pool)){
+    const nk = norm(k);
+    for (const rx of regexList){
+      if (rx.test(nk) && v != null && String(v).trim() !== '') return v;
+    }
+  }
+  return undefined;
+}
+function pickNumericPreferAval(aval, cliente, exactKeys = [], fuzzyPatterns = []){
+  for (const k of exactKeys){
+    const v = aval?.[k];
+    if (v != null && String(v).trim() !== '' && Number.isFinite(parseNumber(v))) return v;
+  }
+  const fvA = pickFuzzyFromObject(aval, fuzzyPatterns);
+  if (fvA != null && Number.isFinite(parseNumber(fvA))) return fvA;
+
+  const pool = mergedAnswers(cliente);
+  for (const k of exactKeys){
+    const v = pool?.[k];
+    if (v != null && String(v).trim() !== '' && Number.isFinite(parseNumber(v))) return v;
+  }
+  const fvR = pickFuzzyFromAnswers(cliente, fuzzyPatterns);
+  if (fvR != null && Number.isFinite(parseNumber(fvR))) return fvR;
+
+  return undefined;
+}
+
+// -------- altura/pescoço com prioridade avaliação → respostas --------
 function getAlturaFrom(cliente, aval){
-  const direct = parseLengthCm(aval?.altura);
-  if (Number.isFinite(direct)) return direct;
-  const ans = cliente?._answers || {};
-  const cand = ans['altura'] ?? ans['Altura'] ?? ans['Altura (cm)'] ?? ans['altura_cm']
-            ?? ans['Altura (m)'] ?? ans['altura_m'] ?? ans['estatura'] ?? ans['Estatura (cm)'];
-  return parseLengthCm(cand);
+  const raw = pickNumericPreferAval(
+    aval, cliente,
+    ['altura','Altura','Altura (cm)','altura_cm','Altura (m)','altura_m','estatura','Estatura (cm)'],
+    [/^altura(\s|\(|$)/, /estatura/, /altura.*(cm|m)/]
+  );
+  return parseLengthCm(raw);
 }
 function getPescocoFrom(cliente, aval){
-  const direct = parseLengthCm(aval?.pescoco ?? aval?.pescoço);
-  if (Number.isFinite(direct)) return direct;
-  const ans = cliente?._answers || {};
-  const cand = ans['pescoco'] ?? ans['Pescoço'] ?? ans['Pescoço (cm)']
-            ?? ans['pescoco_cm'] ?? ans['circ_pescoco'] ?? ans['Circunferência do Pescoço'];
-  return parseLengthCm(cand);
+  const raw = pickNumericPreferAval(
+    aval, cliente,
+    ['pescoco','pescoço','Pescoço','Pescoço (cm)','pescoco_cm','circ_pescoco','Circunferência do Pescoço'],
+    [/pescoc/, /circ.*pescoc/]
+  );
+  return parseLengthCm(raw);
 }
 
-// RCQ direto
-function calcRCQ(a){
-  const c = parseNumber(a?.cintura);
-  const q = parseNumber(a?.quadril);
+// -------- razões e %G --------
+function calcRCQWithFallback(cliente, a){
+  const c = parseNumber(pickNumericPreferAval(a, cliente, ['cintura','Cintura (cm)','cintura_cm'], [/cintur/]));
+  const q = parseNumber(pickNumericPreferAval(a, cliente, ['quadril','Quadril (cm)','quadril_cm'], [/quadril/]));
   return (Number.isFinite(c) && Number.isFinite(q) && q !== 0) ? (c/q) : undefined;
 }
-// RCE com fallback
 function calcRCEWithFallback(cliente, a){
-  const c = parseNumber(a?.cintura);
+  const c = parseNumber(pickNumericPreferAval(a, cliente, ['cintura','Cintura (cm)','cintura_cm'], [/cintur/]));
   const h = getAlturaFrom(cliente, a);
-  return (Number.isFinite(c) && Number.isFinite(h) && h > 0) ? (c/h) : (isNum(a?.whtr) ? parseNumber(a.whtr) : undefined);
+  return (Number.isFinite(c) && Number.isFinite(h) && h > 0) ? (c/h)
+       : (isNum(a?.whtr) ? parseNumber(a.whtr) : undefined);
 }
-
-// %G (Marinha) — feminina
 function navyBodyFatFemaleFromCm({ cintura_cm, quadril_cm, pescoco_cm, altura_cm }){
   const w = parseNumber(cintura_cm), h = parseNumber(quadril_cm), n = parseNumber(pescoco_cm), ht = parseNumber(altura_cm);
   if (![w,h,n,ht].every(Number.isFinite)) return undefined;
@@ -82,8 +156,7 @@ function navyBodyFatFemaleFromCm({ cintura_cm, quadril_cm, pescoco_cm, altura_cm
   return Number.isFinite(bf) ? bf : undefined;
 }
 
-// Procura o texto do diagnóstico técnico em campos comuns.
-// Dica: ao concluir a análise no chat, salve em `ultimaAval.diagnostico_tecnico` ou `c.diagnostico_tecnico`.
+// -------- diagnóstico técnico --------
 function getDiagnosticoTexto(c, ultimaAval){
   return (
     ultimaAval?.diagnostico_tecnico ??
@@ -97,15 +170,24 @@ function getDiagnosticoTexto(c, ultimaAval){
   );
 }
 
+// -------- timing Chart --------
+function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+async function waitForChart(maxTries=30){
+  for (let i=0;i<maxTries;i++){
+    if (window.Chart && typeof window.Chart === 'function') return true;
+    await sleep(120);
+  }
+  console.warn('Chart.js não ficou disponível a tempo.');
+  return false;
+}
+
 export const RelatorioView = {
   async template(id){
     const c = Store.byId(id);
     if (!c) return `<section class="card"><h2>Cliente não encontrada</h2></section>`;
 
     const ultimaAval = (c.avaliacoes||[])
-      .slice()
-      .sort((a,b)=>(a.data||'').localeCompare(b.data||''))
-      .pop() || {};
+      .slice().sort((a,b)=>(a.data||'').localeCompare(b.data||'')).pop() || {};
 
     const treinos = (c.treinos||[])
       .slice()
@@ -134,42 +216,46 @@ export const RelatorioView = {
       RELATORIO_LOGO_PNG = mod.RELATORIO_LOGO_PNG || RELATORIO_LOGO_PNG;
     } catch (_) {}
 
-    // métricas
-    const pesoVal    = pick(ultimaAval, ["peso", "Peso (kg)", "peso_kg"]);
-    const cinturaVal = pick(ultimaAval, ["cintura", "Cintura (cm)", "cintura_cm"]);
-    const quadrilVal = pick(ultimaAval, ["quadril", "Quadril (cm)", "quadril_cm"]);
-    const abdomeVal  = pick(ultimaAval, ["abdomen","abdome","abdomem","abdominal","abdomen_cm","abdome_cm","Abdome (cm)","Abdomen (cm)"]);
-
-    const bodyfatVal = pick(ultimaAval, [
-      "bodyfat","body_fat","bf","%g","g","percentual_gordura","gordura_percentual",
-      "gordura corporal","gordura corporal (%)","gordura corporal %","bf_marinha","bf_navy","body fat"
-    ]);
+    // ===== métricas com fallbacks =====
+    const pesoRaw    = pickNumericPreferAval(ultimaAval, c,
+      ['peso','Peso','Peso (kg)','peso (kg)','peso_kg','Qual é o seu peso?'], [/^peso(\s|\(|$)/, /peso.*kg/, /^kg$/]);
+    const cinturaRaw = pickNumericPreferAval(ultimaAval, c, ['cintura','Cintura (cm)','cintura_cm'], [/cintur/]);
+    const quadrilRaw = pickNumericPreferAval(ultimaAval, c, ['quadril','Quadril (cm)','quadril_cm'], [/quadril/]);
+    const abdomeRaw  = pickNumericPreferAval(ultimaAval, c,
+      ['abdomen','abdome','abdomem','abdominal','abdomen_cm','abdome_cm','Abdome (cm)','Abdomen (cm)'], [/abdom/]);
 
     const alturaCm   = getAlturaFrom(c, ultimaAval);
     const pescocoCm  = getPescocoFrom(c, ultimaAval);
 
+    const rcqCalc = calcRCQWithFallback(c, ultimaAval);
     const rceCalc = calcRCEWithFallback(c, ultimaAval);
 
-    let bodyfatNumber = parseNumber(bodyfatVal);
-    if (!Number.isFinite(bodyfatNumber)){
+    let bfNum = parseNumber(pick(ultimaAval, [
+      "bodyfat","body_fat","bf","%g","g","percentual_gordura","gordura_percentual",
+      "gordura corporal","gordura corporal (%)","gordura corporal %","bf_marinha","bf_navy","body fat"
+    ]));
+    if (!Number.isFinite(bfNum)){
       const est = navyBodyFatFemaleFromCm({
-        cintura_cm: parseNumber(cinturaVal) ?? parseNumber(abdomeVal),
-        quadril_cm: parseNumber(quadrilVal),
+        cintura_cm: parseNumber(cinturaRaw) ?? parseNumber(abdomeRaw),
+        quadril_cm: parseNumber(quadrilRaw),
         pescoco_cm: pescocoCm,
         altura_cm : alturaCm
       });
-      if (Number.isFinite(est)) bodyfatNumber = est;
+      if (Number.isFinite(est)) bfNum = est;
     }
 
-    const peso    = nOrDash(pesoVal, 2);
-    const cintura = nOrDash(cinturaVal, 0);
-    const quadril = nOrDash(quadrilVal, 0);
-    const abdome  = nOrDash(abdomeVal, 0);
-    const rcq     = nOrDash(calcRCQ(ultimaAval), 3);
-    const rce     = nOrDash(rceCalc, 3);
-    const bodyfat = Number.isFinite(bodyfatNumber) ? bodyfatNumber.toFixed(1) : '-';
+    // formatos
+    const peso     = nOrDash(pesoRaw, 2);
+    const cintura  = nOrDash(cinturaRaw, 0);
+    const quadril  = nOrDash(quadrilRaw, 0);
+    const abdome   = nOrDash(abdomeRaw, 0);
+    const alturaF  = Number.isFinite(alturaCm)  ? alturaCm.toFixed(0)  : '-';
+    const pescocoF = Number.isFinite(pescocoCm) ? pescocoCm.toFixed(0) : '-';
+    const rcq      = nOrDash(rcqCalc, 3);
+    const rce      = nOrDash(rceCalc, 3);
+    const bodyfat  = Number.isFinite(bfNum) ? bfNum.toFixed(1) : '-';
 
-    // Texto do diagnóstico técnico (preenchido depois da análise no chat)
+    // Texto do diagnóstico técnico
     const diagTexto = getDiagnosticoTexto(c, ultimaAval);
 
     return `
@@ -231,7 +317,7 @@ export const RelatorioView = {
                 <thead>
                   <tr>
                     <th>Data</th><th>Peso (kg)</th><th>Cintura (cm)</th><th>Quadril (cm)</th>
-                    <th>Abdome (cm)</th><th>RCQ</th><th>RCE</th><th>%G (Marinha)</th>
+                    <th>Abdome (cm)</th><th>Altura (cm)</th><th>Pescoço (cm)</th><th>RCQ</th><th>RCE</th><th>%G (Marinha)</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -241,6 +327,8 @@ export const RelatorioView = {
                     <td>${cintura}</td>
                     <td>${quadril}</td>
                     <td>${abdome}</td>
+                    <td>${alturaF}</td>
+                    <td>${pescocoF}</td>
                     <td>${rcq}</td>
                     <td>${rce}</td>
                     <td>${bodyfat==='-' ? '-' : `${bodyfat}%`}</td>
@@ -309,99 +397,114 @@ export const RelatorioView = {
       catch{ prompt('Copie o link do relatório:', url); }
     });
 
-    if (typeof window.Chart !== 'function') return;
+    // aguarda Chart.js
+    const ok = await waitForChart();
+    if (!ok) return;
+
     const c = Store.byId(id);
     if (!c) return;
 
-    // PESO
-    const seriePeso = (c.avaliacoes || [])
-      .filter(a => isNum(a.peso))
-      .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
+    // ===== Peso (prioriza avaliação; cai para respostas) =====
     const pesoCtx = document.getElementById('chartPeso');
     const pesoEmpty = document.getElementById('pesoEmpty');
+    const seriePeso = (c.avaliacoes || [])
+      .map(a => {
+        const p = pickNumericPreferAval(
+          a, c,
+          ['peso','Peso','Peso (kg)','peso (kg)','peso_kg','Qual é o seu peso?'],
+          [/^peso(\s|\(|$)/, /peso.*kg/, /^kg$/]
+        );
+        const pn = parseNumber(p);
+        return { ...a, pesoNum: Number.isFinite(pn) ? pn : undefined };
+      })
+      .filter(a => Number.isFinite(a.pesoNum))
+      .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
     if (pesoChart) pesoChart.destroy();
     if (pesoCtx && seriePeso.length >= 1){
       pesoChart = new Chart(pesoCtx, {
         type:'line',
-        data:{ labels: seriePeso.map(a=>a.data||''), datasets:[{ label:'Peso (kg)', data: seriePeso.map(a=>parseNumber(a.peso)), tension:.35, borderWidth:3, borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,0.18)', fill:true, pointRadius:4, pointHoverRadius:6 }]},
+        data:{ labels: seriePeso.map(a=>a.data||''), datasets:[{ label:'Peso (kg)', data: seriePeso.map(a=>a.pesoNum), tension:.35, borderWidth:3, borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,0.18)', fill:true, pointRadius:4, pointHoverRadius:6 }]},
         options: baseLineOptions()
       });
-      pesoEmpty.style.display='none';
-    } else if (pesoEmpty){ pesoEmpty.style.display='block'; }
+      pesoEmpty && (pesoEmpty.style.display='none');
+    } else { pesoEmpty && (pesoEmpty.style.display='block'); }
 
-    // RCQ
-    const serieRCQ = (c.avaliacoes || [])
-      .map(a => ({ ...a, rcq: calcRCQ(a) }))
-      .filter(a => isNum(a.rcq))
-      .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
+    // ===== RCQ (cintura/quadril com fallback) =====
     const rcqCtx = document.getElementById('chartRCQ');
     const rcqEmpty = document.getElementById('rcqEmpty');
+    const serieRCQ = (c.avaliacoes || [])
+      .map(a => ({ ...a, rcq: calcRCQWithFallback(c, a) }))
+      .filter(a => Number.isFinite(a.rcq))
+      .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
     if (rcqChart) rcqChart.destroy();
     if (rcqCtx && serieRCQ.length >= 1){
       const labels = serieRCQ.map(a=>a.data || '');
       rcqChart = new Chart(rcqCtx, {
         type:'line',
         data:{ labels, datasets:[
-          { label:'RCQ', data: serieRCQ.map(a=>parseNumber(a.rcq)), tension:.35, borderWidth:3, borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,.18)', fill:true, pointRadius:4, pointHoverRadius:6 },
+          { label:'RCQ', data: serieRCQ.map(a=>a.rcq), tension:.35, borderWidth:3, borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,.18)', fill:true, pointRadius:4, pointHoverRadius:6 },
           { label:'Guia ~0,85 (mulheres)', data: labels.map(()=>0.85), borderWidth:1, borderColor:'#888', pointRadius:0, fill:false, borderDash:[6,4], tension:0 }
         ]},
         options: baseLineOptions()
       });
-      rcqEmpty.style.display='none';
-    } else if (rcqEmpty){ rcqEmpty.style.display='block'; }
+      rcqEmpty && (rcqEmpty.style.display='none');
+    } else { rcqEmpty && (rcqEmpty.style.display='block'); }
 
-    // RCE (com fallback)
-    const serieRCE = (c.avaliacoes || [])
-      .map(a => ({ ...a, rce: calcRCEWithFallback(c, a) }))
-      .filter(a => isNum(a.rce))
-      .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
+    // ===== RCE (cintura/estatura com fallback) =====
     const rceCtx = document.getElementById('chartRCE');
     const rceEmpty = document.getElementById('rceEmpty');
     const note = document.getElementById('rceNote');
+    const serieRCE = (c.avaliacoes || [])
+      .map(a => ({ ...a, rce: calcRCEWithFallback(c, a) }))
+      .filter(a => Number.isFinite(a.rce))
+      .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
     if (rceChart) rceChart.destroy();
     if (rceCtx && serieRCE.length >= 1){
       const labels = serieRCE.map(a=>a.data || '');
       rceChart = new Chart(rceCtx, {
         type:'line',
         data:{ labels, datasets:[
-          { label:'RCE', data: serieRCE.map(a=>parseNumber(a.rce)), tension:.35, borderWidth:3, borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,.18)', fill:true, pointRadius:4, pointHoverRadius:6 },
+          { label:'RCE', data: serieRCE.map(a=>a.rce), tension:.35, borderWidth:3, borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,.18)', fill:true, pointRadius:4, pointHoverRadius:6 },
           { label:'Guia 0,50', data: labels.map(()=>0.50), borderWidth:1, borderColor:'#888', pointRadius:0, fill:false, borderDash:[6,4], tension:0 }
         ]},
         options: { ...baseLineOptions(), scales:{ y:{ beginAtZero:false, suggestedMin:0.35, suggestedMax:0.8 } } }
       });
-      rceEmpty.style.display='none';
+      rceEmpty && (rceEmpty.style.display='none');
     } else {
-      if (rceEmpty) rceEmpty.style.display='block';
-      if (note){ note.style.display='block'; note.textContent = 'Para plotar o RCE precisamos de “altura” (cm) — pode vir do Forms ou das respostas.'; }
+      rceEmpty && (rceEmpty.style.display='block');
+      if (note){ note.style.display='block'; note.textContent = 'Para plotar RCE precisamos da “altura” (cm). Pode vir do Forms ou das respostas.'; }
     }
 
-    // %G — reportado ou estimado
+    // ===== %G (reportado ou estimado) =====
     const alturaGlobal = getAlturaFrom(c, {});
     const pescocoGlobal = getPescocoFrom(c, {});
+    const bfCtx = document.getElementById('chartBF');
+    const bfEmpty = document.getElementById('bfEmpty');
     const serieBF = (c.avaliacoes || [])
       .map(a => {
-        if (isNum(a.bodyfat)) return { ...a, bodyfat: parseNumber(a.bodyfat) };
-        const cintura = parseNumber(a.cintura) ?? parseNumber(a.abdome);
-        const quadril = parseNumber(a.quadril);
+        if (isNum(a.bodyfat)) return { ...a, bfNum: parseNumber(a.bodyfat) };
+        const cintura = parseNumber(
+          pickNumericPreferAval(a, c, ['cintura','Cintura (cm)','cintura_cm'], [/cintur/]) ??
+          pickNumericPreferAval(a, c, ['abdomen','abdome','abdomem','abdominal','abdomen_cm','abdome_cm','Abdome (cm)','Abdomen (cm)'], [/abdom/])
+        );
+        const quadril = parseNumber(pickNumericPreferAval(a, c, ['quadril','Quadril (cm)','quadril_cm'], [/quadril/]));
         const h = getAlturaFrom(c, a) ?? alturaGlobal;
         const n = getPescocoFrom(c, a) ?? pescocoGlobal;
         const est = navyBodyFatFemaleFromCm({ cintura_cm:cintura, quadril_cm:quadril, pescoco_cm:n, altura_cm:h });
-        return Number.isFinite(est) ? { ...a, bodyfat: est } : a;
+        return Number.isFinite(est) ? { ...a, bfNum: est } : a;
       })
-      .filter(a => isNum(a.bodyfat))
+      .filter(a => Number.isFinite(a.bfNum))
       .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
-    const bfCtx = document.getElementById('chartBF');
-    const bfEmpty = document.getElementById('bfEmpty');
     if (bfChart) bfChart.destroy();
     if (bfCtx && serieBF.length >= 1){
       const labels = serieBF.map(a=>a.data || '');
       bfChart = new Chart(bfCtx, {
         type:'line',
-        data:{ labels, datasets:[{ label:'%G', data: serieBF.map(a=>parseNumber(a.bodyfat)), tension:.35, borderWidth:3, borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,.18)', fill:true, pointRadius:4, pointHoverRadius:6 }]},
+        data:{ labels, datasets:[{ label:'%G', data: serieBF.map(a=>a.bfNum), tension:.35, borderWidth:3, borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,.18)', fill:true, pointRadius:4, pointHoverRadius:6 }]},
         options: baseLineOptions()
       });
-      bfEmpty.style.display='none';
-    } else if (bfEmpty){ bfEmpty.style.display='block'; }
+      bfEmpty && (bfEmpty.style.display='none');
+    } else { bfEmpty && (bfEmpty.style.display='block'); }
   }
 };
 
