@@ -18,7 +18,7 @@ function nOrDash(v, d=0){ const n = parseNumber(v); return Number.isFinite(n) ? 
 function baseLineOptions(){
   return {
     responsive: true,
-    maintainAspectRatio: false, // <<< faz o canvas usar 100% da largura disponível
+    // mantém o aspecto padrão do Chart.js (usa o atributo height do <canvas>)
     plugins: { legend: { display: false } },
     scales: { y: { beginAtZero: false } }
   };
@@ -376,39 +376,38 @@ export const RelatorioView = {
 
     return `
       <style>
-        .r-wrap{max-width:900px;margin:0 auto;padding:18px}
-        .r-actions{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0 18px}
-        .r-btn{padding:10px 14px;border:1px solid var(--border);border-radius:10px;background:#111;color:#eee;text-decoration:none;cursor:pointer}
-        .r-btn.primary{background:#c62828;border-color:#c62828;color:#fff}
-        .r-header{display:flex;align-items:center;gap:14px;border-bottom:1px solid var(--border);padding-bottom:12px;margin-bottom:16px}
-        .r-header img{height:44px}
-        .brand-text{display:none;font-weight:700}
-        .r-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-        @media (max-width:760px){ .r-grid{grid-template-columns:1fr} }
-        .r-card{border:1px solid var(--border);border-radius:12px;padding:12px;background:rgba(255,255,255,.02)}
-        .mono{white-space:pre-wrap;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,"Liberation Mono","Courier New",monospace; line-height:1.4}
-        .muted{opacity:.75}
-        .table th, .table td{padding:8px 10px}
-        .avoid-break{page-break-inside:avoid}
-        .explain{opacity:.85;font-size:.92rem}
-        .chart-card canvas{
-          width:100% !important;        /* ocupa a largura inteira do card */
-          display:block;
-          height:240px;                 /* altura confortável na tela */
-          max-height:none;
-        }
+        /* Escopo do relatório para não vazar estilos */
+        .relatorio-scope .r-wrap{max-width:980px;margin:0 auto;padding:18px}
+        .relatorio-scope .r-actions{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0 18px}
+        .relatorio-scope .r-btn{padding:10px 14px;border:1px solid var(--border);border-radius:10px;background:#111;color:#eee;text-decoration:none;cursor:pointer}
+        .relatorio-scope .r-btn.primary{background:#c62828;border-color:#c62828;color:#fff}
+        .relatorio-scope .r-header{display:flex;align-items:center;gap:14px;border-bottom:1px solid var(--border);padding-bottom:12px;margin-bottom:16px}
+        .relatorio-scope .r-header img{height:44px}
+        .relatorio-scope .brand-text{display:none;font-weight:700}
+        .relatorio-scope .r-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+        @media (max-width:760px){ .relatorio-scope .r-grid{grid-template-columns:1fr} }
+        .relatorio-scope .r-card{border:1px solid var(--border);border-radius:12px;padding:12px;background:rgba(255,255,255,.02)}
+        .relatorio-scope .mono{white-space:pre-wrap;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,"Liberation Mono","Courier New",monospace; line-height:1.4}
+        .relatorio-scope .muted{opacity:.75}
+        .relatorio-scope .table th, .relatorio-scope .table td{padding:8px 10px}
+        .relatorio-scope .avoid-break{page-break-inside:avoid}
+        .relatorio-scope .explain{opacity:.85;font-size:.92rem}
+        /* Importante: sem altura em CSS -> usa height do <canvas> */
+        .relatorio-scope .chart-card canvas{ width:100%; display:block; max-height:none; }
+        .relatorio-scope .row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+        .relatorio-scope .just{ text-align: justify; }
+        .relatorio-scope .summary-2l{white-space:pre-line; font-size:.98rem; line-height:1.35}
+
         @media print{
-          .r-actions{display:none !important}
+          .relatorio-scope .r-actions{display:none !important}
           body{background:#fff}
-          .r-wrap{padding:0}
-          .r-card{background:#fff}
-          .chart-card canvas{ height:260px; } /* um pouco maior no PDF */
+          /* ocupar a largura útil da página com pequena margem interna */
+          .relatorio-scope .r-wrap{max-width:100%; padding:8mm 10mm;}
+          .relatorio-scope .r-card{background:#fff}
         }
-        .row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
-        .just{ text-align: justify; }
-        .summary-2l{white-space:pre-line; font-size:.98rem; line-height:1.35}
       </style>
 
+      <div class="relatorio-scope">
       <div class="r-wrap">
         <div class="r-actions">
           <a href="#/cliente/${c.id}" class="r-btn">← Voltar</a>
@@ -516,6 +515,7 @@ export const RelatorioView = {
 
         <div class="muted" style="margin-top:16px">© ${esc(BRAND_NAME)} • Documento gerado automaticamente</div>
       </div>
+      </div>
     `;
   },
 
@@ -538,11 +538,6 @@ export const RelatorioView = {
     const c = Store.byId(id);
     if (!c) return;
 
-    // helper: garante largura do canvas antes de criar o chart
-    function prepCanvas(cv){
-      try{ cv.width = cv.parentElement?.clientWidth || cv.width; }catch{}
-    }
-
     // ===== Peso =====
     const pesoCtx = document.getElementById('chartPeso');
     const pesoEmpty = document.getElementById('pesoEmpty');
@@ -560,13 +555,11 @@ export const RelatorioView = {
       .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
     if (pesoChart) pesoChart.destroy();
     if (pesoCtx && seriePeso.length >= 1){
-      prepCanvas(pesoCtx);
       pesoChart = new Chart(pesoCtx, {
         type:'line',
         data:{ labels: seriePeso.map(a=>a.data||''), datasets:[{ label:'Peso (kg)', data: seriePeso.map(a=>a.pesoNum), tension:.35, borderWidth:3, borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,0.18)', fill:true, pointRadius:4, pointHoverRadius:6 }]},
         options: baseLineOptions()
       });
-      try{ pesoChart.resize(); }catch{}
       pesoEmpty && (pesoEmpty.style.display='none');
     } else { pesoEmpty && (pesoEmpty.style.display='block'); }
 
@@ -579,7 +572,6 @@ export const RelatorioView = {
       .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
     if (rcqChart) rcqChart.destroy();
     if (rcqCtx && serieRCQ.length >= 1){
-      prepCanvas(rcqCtx);
       const labels = serieRCQ.map(a=>a.data || '');
       rcqChart = new Chart(rcqCtx, {
         type:'line',
@@ -589,7 +581,6 @@ export const RelatorioView = {
         ]},
         options: baseLineOptions()
       });
-      try{ rcqChart.resize(); }catch{}
       rcqEmpty && (rcqEmpty.style.display='none');
     } else { rcqEmpty && (rcqEmpty.style.display='block'); }
 
@@ -603,7 +594,6 @@ export const RelatorioView = {
       .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
     if (rceChart) rceChart.destroy();
     if (rceCtx && serieRCE.length >= 1){
-      prepCanvas(rceCtx);
       const labels = serieRCE.map(a=>a.data || '');
       rceChart = new Chart(rceCtx, {
         type:'line',
@@ -613,7 +603,6 @@ export const RelatorioView = {
         ]},
         options: { ...baseLineOptions(), scales:{ y:{ beginAtZero:false, suggestedMin:0.35, suggestedMax:0.8 } } }
       });
-      try{ rceChart.resize(); }catch{}
       rceEmpty && (rceEmpty.style.display='none');
     } else {
       rceEmpty && (rceEmpty.style.display='block');
@@ -622,7 +611,7 @@ export const RelatorioView = {
 
     // ===== %G =====
     const alturaGlobal = getAlturaFrom(c, {});
-    const pescocoGlobal = getPescocoFrom(c, {});
+    thePescocoGlobal = getPescocoFrom(c, {});
     const bfCtx = document.getElementById('chartBF');
     const bfEmpty = document.getElementById('bfEmpty');
     const serieBF = (c.avaliacoes || [])
@@ -634,7 +623,7 @@ export const RelatorioView = {
         );
         const quadril = parseNumber(pickNumericPreferAval(a, c, ['quadril','Quadril (cm)','quadril_cm'], [/quadril/]));
         const h = getAlturaFrom(c, a) ?? alturaGlobal;
-        const n = getPescocoFrom(c, a) ?? pescocoGlobal;
+        const n = getPescocoFrom(c, a) ?? thePescocoGlobal;
         const est = navyBodyFatFemaleFromCm({ cintura_cm:cintura, quadril_cm:quadril, pescoco_cm:n, altura_cm:h });
         return Number.isFinite(est) ? { ...a, bfNum: est } : a;
       })
@@ -642,24 +631,14 @@ export const RelatorioView = {
       .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
     if (bfChart) bfChart.destroy();
     if (bfCtx && serieBF.length >= 1){
-      prepCanvas(bfCtx);
       const labels = serieBF.map(a=>a.data || '');
       bfChart = new Chart(bfCtx, {
         type:'line',
         data:{ labels, datasets:[{ label:'%G', data: serieBF.map(a=>a.bfNum), tension:.35, borderWidth:3, borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,.18)', fill:true, pointRadius:4, pointHoverRadius:6 }]},
         options: baseLineOptions()
       });
-      try{ bfChart.resize(); }catch{}
       bfEmpty && (bfEmpty.style.display='none');
     } else { bfEmpty && (bfEmpty.style.display='block'); }
-
-    // Reagir ao resize/print
-    window.addEventListener('resize', ()=>{
-      try{ pesoChart?.resize(); }catch{}
-      try{ rcqChart?.resize();  }catch{}
-      try{ rceChart?.resize();  }catch{}
-      try{ bfChart?.resize();   }catch{}
-    }, { passive:true });
   }
 };
 
