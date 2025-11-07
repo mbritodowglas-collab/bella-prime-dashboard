@@ -1,5 +1,5 @@
 // ================================
-// VIEW: Relatório da Cliente (A4/print) — com gráficos, Resumo 2 linhas e Diagnóstico técnico
+// VIEW: Relatório da Cliente (A4/print) — com gráficos e explicações (versão com fallbacks)
 // ================================
 import { Store } from '../app.js';
 
@@ -15,14 +15,7 @@ let bfChart   = null;
 function esc(s){ return String(s || '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m])); }
 function isNum(v){ return Number.isFinite(parseNumber(v)); }
 function nOrDash(v, d=0){ const n = parseNumber(v); return Number.isFinite(n) ? n.toFixed(d) : '-'; }
-function baseLineOptions(){
-  return {
-    responsive: true,
-    maintainAspectRatio: false, // <<< garante altura fixa definida no style do canvas
-    plugins:{ legend:{ display:false } },
-    scales:{ y:{ beginAtZero:false } }
-  };
-}
+function baseLineOptions(){ return { responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:false } } }; }
 function pick(obj, keys){ for (const k of keys){ const val = obj?.[k]; if (val != null && String(val).trim() !== '') return val; } return undefined; }
 
 // -------- parsing / normalização --------
@@ -163,77 +156,18 @@ function navyBodyFatFemaleFromCm({ cintura_cm, quadril_cm, pescoco_cm, altura_cm
   return Number.isFinite(bf) ? bf : undefined;
 }
 
-// -------- diagnóstico técnico (coleta ampliada) --------
+// -------- diagnóstico técnico (somente leitura p/ relatório) --------
 function getDiagnosticoTexto(c, ultimaAval){
   return (
     ultimaAval?.diagnostico_tecnico ??
     ultimaAval?.diagnostico ??
-    ultimaAval?.analise_tecnica ??
-    ultimaAval?.analise ??
-    ultimaAval?.diagnosticoTecnico ??
-    ultimaAval?.diagnostico_tecnico_txt ??
     ultimaAval?.parecer ??
     c?.diagnostico_tecnico ??
     c?._diagnostico_tecnico ??
-    c?.analise_tecnica ??
-    c?.diagnosticoTecnico ??
-    c?.diagnostico_tecnico_txt ??
     c?._ai_diagnostico ??
     c?.ai_diagnostico ??
     ''
   );
-}
-
-// -------- util: micro-tendência (últimos 2 pontos) --------
-function lastTwo(arr){
-  if (!Array.isArray(arr)) return [];
-  const x = arr.slice().filter(v => Number.isFinite(v)).slice(-2);
-  return x.length === 2 ? x : [];
-}
-function trendWord(v2, v1, betterWhenLower=true, tol=0.001){
-  const diff = v2 - v1;
-  if (Math.abs(diff) <= tol) return 'estável';
-  const goingDown = diff < 0;
-  return betterWhenLower ? (goingDown ? 'melhora' : 'piora') : (goingDown ? 'queda' : 'alta');
-}
-
-// -------- Resumo em 2 linhas --------
-function buildResumo2Linhas(c, ultimaAval, {pesoVal, rcqVal, rceVal, bfVal}, series){
-  const rcqFlag = Number.isFinite(rcqVal) ? (rcqVal <= 0.85 ? 'dentro da meta de RCQ' : 'RCQ acima do ideal') : null;
-  const rceFlag = Number.isFinite(rceVal) ? (rceVal < 0.50 ? 'RCE < 0,50' : 'RCE ≥ 0,50') : null;
-
-  let bfBucket = null;
-  if (Number.isFinite(bfVal)){
-    if (bfVal < 21) bfBucket = 'baixo a atlético';
-    else if (bfVal < 25) bfBucket = 'fitness';
-    else if (bfVal < 32) bfBucket = 'médio';
-    else bfBucket = 'elevado';
-  }
-
-  const peso2 = lastTwo(series.peso);
-  const rcq2  = lastTwo(series.rcq);
-  const rce2  = lastTwo(series.rce);
-  const bf2   = lastTwo(series.bf);
-
-  const tPeso = (peso2.length===2) ? trendWord(peso2[1], peso2[0], true) : null;
-  const tRCQ  = (rcq2.length===2)  ? trendWord(rcq2[1], rcq2[0], true) : null;
-  const tRCE  = (rce2.length===2)  ? trendWord(rce2[1], rce2[0], true) : null;
-  const tBF   = (bf2.length===2)   ? trendWord(bf2[1], bf2[0], true)   : null;
-
-  const parts1 = [];
-  if (Number.isFinite(rcqVal)) parts1.push(`RCQ ${rcqVal.toFixed(3)} (${rcqFlag})`);
-  if (Number.isFinite(rceVal)) parts1.push(`RCE ${rceVal.toFixed(3)}${rceFlag ? ` (${rceFlag})` : ''}`);
-  if (Number.isFinite(bfVal))  parts1.push(`%G ${bfVal.toFixed(1)}%${bfBucket ? ` (${bfBucket})` : ''}`);
-  const linha1 = parts1.length ? parts1.join(' · ') : 'Sem dados suficientes para RCQ/RCE/%G.';
-
-  const parts2 = [];
-  if (tPeso) parts2.push(`peso ${tPeso}`);
-  if (tRCQ)  parts2.push(`RCQ ${tRCQ}`);
-  if (tRCE)  parts2.push(`RCE ${tRCE}`);
-  if (tBF)   parts2.push(`%G ${tBF}`);
-  const linha2 = parts2.length ? `Tendência recente: ${parts2.join(' · ')}.` : 'Sem tendências detectáveis (dados pontuais ou insuficientes).';
-
-  return `${linha1}\n${linha2}`;
 }
 
 // -------- timing Chart --------
@@ -321,52 +255,8 @@ export const RelatorioView = {
     const rce      = nOrDash(rceCalc, 3);
     const bodyfat  = Number.isFinite(bfNum) ? bfNum.toFixed(1) : '-';
 
-    // Texto do Diagnóstico técnico
+    // Texto do diagnóstico técnico (somente exibição)
     const diagTexto = getDiagnosticoTexto(c, ultimaAval);
-
-    // ===== RESUMO 2 LINHAS =====
-    const seriePeso = (c.avaliacoes||[])
-      .map(a=>{
-        const p = pickNumericPreferAval(
-          a, c,
-          ['peso','Peso','Peso (kg)','peso (kg)','peso_kg','Qual é o seu peso?'],
-          [/^peso(\s|\(|$)/, /peso.*kg/, /^kg$/]
-        );
-        const n = parseNumber(p);
-        return Number.isFinite(n) ? n : undefined;
-      }).filter(Number.isFinite);
-
-    const serieRCQ = (c.avaliacoes||[])
-      .map(a => calcRCQWithFallback(c, a))
-      .filter(Number.isFinite);
-
-    const serieRCE = (c.avaliacoes||[])
-      .map(a => calcRCEWithFallback(c, a))
-      .filter(Number.isFinite);
-
-    const serieBF = (c.avaliacoes||[])
-      .map(a=>{
-        if (isNum(a.bodyfat)) return parseNumber(a.bodyfat);
-        const cintura = parseNumber(
-          pickNumericPreferAval(a, c, ['cintura','Cintura (cm)','cintura_cm'], [/cintur/]) ??
-          pickNumericPreferAval(a, c, ['abdomen','abdome','abdomem','abdominal','abdomen_cm','abdome_cm','Abdome (cm)','Abdomen (cm)'], [/abdom/])
-        );
-        const quadril = parseNumber(pickNumericPreferAval(a, c, ['quadril','Quadril (cm)','quadril_cm'], [/quadril/]));
-        const h = getAlturaFrom(c, a) ?? alturaCm;
-        const n = getPescocoFrom(c, a) ?? pescocoCm;
-        return navyBodyFatFemaleFromCm({ cintura_cm:cintura, quadril_cm:quadril, pescoco_cm:n, altura_cm:h });
-      }).filter(Number.isFinite);
-
-    const resumo2 = buildResumo2Linhas(
-      c, ultimaAval,
-      {
-        pesoVal: Number.isFinite(parseNumber(pesoRaw)) ? parseNumber(pesoRaw) : undefined,
-        rcqVal : Number.isFinite(rcqCalc) ? rcqCalc : undefined,
-        rceVal : Number.isFinite(rceCalc) ? rceCalc : undefined,
-        bfVal  : Number.isFinite(bfNum) ? bfNum : undefined
-      },
-      { peso: seriePeso, rcq: serieRCQ, rce: serieRCE, bf: serieBF }
-    );
 
     return `
       <style>
@@ -385,11 +275,10 @@ export const RelatorioView = {
         .table th, .table td{padding:8px 10px}
         .avoid-break{page-break-inside:avoid}
         .explain{opacity:.85;font-size:.92rem}
-        .chart-card canvas{max-height:none} /* <<< sem teto de altura */
+        .chart-card canvas{max-height:220px}
         @media print{ .r-actions{display:none !important} body{background:#fff} .r-wrap{padding:0} .r-card{background:#fff} }
         .row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
         .just{ text-align: justify; }
-        .summary-2l{white-space:pre-line; font-size:.98rem; line-height:1.35}
       </style>
 
       <div class="r-wrap">
@@ -454,14 +343,14 @@ export const RelatorioView = {
         <div class="r-card chart-card avoid-break" style="margin-top:14px">
           <h3 style="margin-top:0">Evolução do Peso</h3>
           <div id="pesoEmpty" class="muted" style="display:none">Sem dados de peso suficientes.</div>
-          <canvas id="chartPeso" height="180" style="width:100%;height:240px;display:block"></canvas>
+          <canvas id="chartPeso" height="180"></canvas>
         </div>
 
         <div class="r-card chart-card avoid-break" style="margin-top:14px">
           <div class="row"><h3 style="margin:0">RCQ (Relação Cintura/Quadril)</h3>
             <div class="explain"><b>O que é:</b> cintura ÷ quadril. <b>Alvo (mulheres):</b> ≲ 0,85.</div></div>
           <div id="rcqEmpty" class="muted" style="display:none">Sem dados de RCQ suficientes.</div>
-          <canvas id="chartRCQ" height="180" style="width:100%;height:240px;display:block"></canvas>
+          <canvas id="chartRCQ" height="180"></canvas>
         </div>
 
         <div class="r-card chart-card avoid-break" style="margin-top:14px">
@@ -469,36 +358,27 @@ export const RelatorioView = {
             <div class="explain"><b>Regra de bolso:</b> manter &lt; 0,50.</div></div>
           <div id="rceNote" class="muted" style="display:none;margin-bottom:6px"></div>
           <div id="rceEmpty" class="muted" style="display:none">Sem dados de RCE suficientes.</div>
-          <canvas id="chartRCE" height="180" style="width:100%;height:240px;display:block"></canvas>
+          <canvas id="chartRCE" height="180"></canvas>
         </div>
 
         <div class="r-card chart-card avoid-break" style="margin-top:14px">
           <div class="row"><h3 style="margin:0">% Gordura Corporal (Marinha)</h3>
             <div class="explain">Usa o valor reportado ou a estimativa (altura, pescoço, cintura, quadril).</div></div>
           <div id="bfEmpty" class="muted" style="display:none">Sem dados de %G suficientes.</div>
-          <canvas id="chartBF" height="180" style="width:100%;height:240px;display:block"></canvas>
-        </div>
-
-        <!-- RESUMO 2 LINHAS -->
-        <div class="r-card avoid-break" style="margin-top:14px">
-          <h3 style="margin-top:0">Resumo (2 linhas)</h3>
-          <div class="summary-2l mono">${esc(resumo2)}</div>
-        </div>
-
-        <!-- Diagnóstico técnico (sempre visível; placeholder se vazio) -->
-        <div class="r-card avoid-break" style="margin-top:14px">
-          <h3 style="margin-top:0">Diagnóstico técnico</h3>
-          ${
-            (diagTexto && String(diagTexto).replace(/\s+/g,'').length)
-              ? `<div class="mono just">${esc(diagTexto)}</div>`
-              : `<div class="muted">— sem diagnóstico registrado —</div>`
-          }
+          <canvas id="chartBF" height="180"></canvas>
         </div>
 
         <div class="r-card avoid-break" style="margin-top:14px">
           <h3 style="margin-top:0">Plano de treino mais recente (texto)</h3>
           ${planoMaisRecente ? `<div class="mono">${esc(planoMaisRecente)}</div>` : '<div class="muted">— sem plano anexado no último lançamento —</div>'}
         </div>
+
+        ${diagTexto && String(diagTexto).trim() ? `
+          <div class="r-card avoid-break" style="margin-top:14px">
+            <h3 style="margin-top:0">Diagnóstico técnico</h3>
+            <div class="mono just">${esc(diagTexto)}</div>
+          </div>
+        ` : ''}
 
         <div class="muted" style="margin-top:16px">© ${esc(BRAND_NAME)} • Documento gerado automaticamente</div>
       </div>
@@ -524,7 +404,7 @@ export const RelatorioView = {
     const c = Store.byId(id);
     if (!c) return;
 
-    // ===== Peso =====
+    // ===== Peso (prioriza avaliação; cai para respostas) =====
     const pesoCtx = document.getElementById('chartPeso');
     const pesoEmpty = document.getElementById('pesoEmpty');
     const seriePeso = (c.avaliacoes || [])
@@ -549,7 +429,7 @@ export const RelatorioView = {
       pesoEmpty && (pesoEmpty.style.display='none');
     } else { pesoEmpty && (pesoEmpty.style.display='block'); }
 
-    // ===== RCQ =====
+    // ===== RCQ (cintura/quadril com fallback) =====
     const rcqCtx = document.getElementById('chartRCQ');
     const rcqEmpty = document.getElementById('rcqEmpty');
     const serieRCQ = (c.avaliacoes || [])
@@ -570,7 +450,7 @@ export const RelatorioView = {
       rcqEmpty && (rcqEmpty.style.display='none');
     } else { rcqEmpty && (rcqEmpty.style.display='block'); }
 
-    // ===== RCE =====
+    // ===== RCE (cintura/estatura com fallback) =====
     const rceCtx = document.getElementById('chartRCE');
     const rceEmpty = document.getElementById('rceEmpty');
     const note = document.getElementById('rceNote');
@@ -595,7 +475,7 @@ export const RelatorioView = {
       if (note){ note.style.display='block'; note.textContent = 'Para plotar RCE precisamos da “altura” (cm). Pode vir do Forms ou das respostas.'; }
     }
 
-    // ===== %G =====
+    // ===== %G (reportado ou estimado) =====
     const alturaGlobal = getAlturaFrom(c, {});
     const pescocoGlobal = getPescocoFrom(c, {});
     const bfCtx = document.getElementById('chartBF');
@@ -607,11 +487,11 @@ export const RelatorioView = {
           pickNumericPreferAval(a, c, ['cintura','Cintura (cm)','cintura_cm'], [/cintur/]) ??
           pickNumericPreferAval(a, c, ['abdomen','abdome','abdomem','abdominal','abdomen_cm','abdome_cm','Abdome (cm)','Abdomen (cm)'], [/abdom/])
         );
-      const quadril = parseNumber(pickNumericPreferAval(a, c, ['quadril','Quadril (cm)','quadril_cm'], [/quadril/]));
-      const h = getAlturaFrom(c, a) ?? alturaGlobal;
-      const n = getPescocoFrom(c, a) ?? pescocoGlobal;
-      const est = navyBodyFatFemaleFromCm({ cintura_cm:cintura, quadril_cm:quadril, pescoco_cm:n, altura_cm:h });
-      return Number.isFinite(est) ? { ...a, bfNum: est } : a;
+        const quadril = parseNumber(pickNumericPreferAval(a, c, ['quadril','Quadril (cm)','quadril_cm'], [/quadril/]));
+        const h = getAlturaFrom(c, a) ?? alturaGlobal;
+        const n = getPescocoFrom(c, a) ?? pescocoGlobal;
+        const est = navyBodyFatFemaleFromCm({ cintura_cm:cintura, quadril_cm:quadril, pescoco_cm:n, altura_cm:h });
+        return Number.isFinite(est) ? { ...a, bfNum: est } : a;
       })
       .filter(a => Number.isFinite(a.bfNum))
       .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
