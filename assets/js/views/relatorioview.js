@@ -1,5 +1,5 @@
 // ================================
-// VIEW: Relatório da Cliente (A4/print) — com gráficos e explicações (versão com fallbacks)
+// VIEW: Relatório da Cliente (A4/print) — com gráficos e explicações (versão com fallbacks + Resumo 2 linhas)
 // ================================
 import { Store } from '../app.js';
 
@@ -156,7 +156,7 @@ function navyBodyFatFemaleFromCm({ cintura_cm, quadril_cm, pescoco_cm, altura_cm
   return Number.isFinite(bf) ? bf : undefined;
 }
 
-// -------- diagnóstico técnico (somente leitura p/ relatório) --------
+// -------- diagnóstico técnico --------
 function getDiagnosticoTexto(c, ultimaAval){
   return (
     ultimaAval?.diagnostico_tecnico ??
@@ -168,6 +168,66 @@ function getDiagnosticoTexto(c, ultimaAval){
     c?.ai_diagnostico ??
     ''
   );
+}
+
+// -------- util: micro-tendência (últimos 2 pontos) --------
+function lastTwo(arr){
+  if (!Array.isArray(arr)) return [];
+  const x = arr.slice().filter(v => Number.isFinite(v)).slice(-2);
+  return x.length === 2 ? x : [];
+}
+function trendWord(v2, v1, betterWhenLower=true, tol=0.001){
+  const diff = v2 - v1;
+  if (Math.abs(diff) <= tol) return 'estável';
+  const goingDown = diff < 0;
+  // se "melhor quando menor", queda é "melhora"
+  if (betterWhenLower) return goingDown ? 'melhora' : 'piora';
+  // se melhor quando maior (ex.: peso em ganho de massa? aqui deixo neutro e uso só direção)
+  return goingDown ? 'queda' : 'alta';
+}
+
+// -------- Resumo em 2 linhas (curto e direto) --------
+function buildResumo2Linhas(c, ultimaAval, {pesoVal, rcqVal, rceVal, bfVal}, series){
+  // flags simples
+  const rcqFlag = Number.isFinite(rcqVal) ? (rcqVal <= 0.85 ? 'dentro da meta de RCQ' : 'RCQ acima do ideal') : null;
+  const rceFlag = Number.isFinite(rceVal) ? (rceVal < 0.50 ? 'RCE < 0,50' : 'RCE ≥ 0,50') : null;
+
+  // zonas %G (mulheres, referência geral)
+  let bfBucket = null;
+  if (Number.isFinite(bfVal)){
+    if (bfVal < 21) bfBucket = 'baixo a atlético';
+    else if (bfVal < 25) bfBucket = 'fitness';
+    else if (bfVal < 32) bfBucket = 'médio';
+    else bfBucket = 'elevado';
+  }
+
+  // tendências
+  const peso2 = lastTwo(series.peso);
+  const rcq2  = lastTwo(series.rcq);
+  const rce2  = lastTwo(series.rce);
+  const bf2   = lastTwo(series.bf);
+
+  const tPeso = (peso2.length===2) ? trendWord(peso2[1], peso2[0], /*betterWhenLower?*/ true) : null;
+  const tRCQ  = (rcq2.length===2)  ? trendWord(rcq2[1], rcq2[0], true) : null;
+  const tRCE  = (rce2.length===2)  ? trendWord(rce2[1], rce2[0], true) : null;
+  const tBF   = (bf2.length===2)   ? trendWord(bf2[1], bf2[0], true)   : null;
+
+  // linha 1: estado atual (RCQ, RCE, %G)
+  const parts1 = [];
+  if (Number.isFinite(rcqVal)) parts1.push(`RCQ ${rcqVal.toFixed(3)} (${rcqFlag})`);
+  if (Number.isFinite(rceVal)) parts1.push(`RCE ${rceVal.toFixed(3)}${rceFlag ? ` (${rceFlag})` : ''}`);
+  if (Number.isFinite(bfVal))  parts1.push(`%G ${bfVal.toFixed(1)}%${bfBucket ? ` (${bfBucket})` : ''}`);
+  const linha1 = parts1.length ? parts1.join(' · ') : 'Sem dados suficientes para RCQ/RCE/%G.';
+
+  // linha 2: direção recente (tendência)
+  const parts2 = [];
+  if (tPeso) parts2.push(`peso ${tPeso}`);
+  if (tRCQ)  parts2.push(`RCQ ${tRCQ}`);
+  if (tRCE)  parts2.push(`RCE ${tRCE}`);
+  if (tBF)   parts2.push(`%G ${tBF}`);
+  const linha2 = parts2.length ? `Tendência recente: ${parts2.join(' · ')}.` : 'Sem tendências detectáveis (dados pontuais ou insuficientes).';
+
+  return `${linha1}\n${linha2}`;
 }
 
 // -------- timing Chart --------
@@ -255,8 +315,53 @@ export const RelatorioView = {
     const rce      = nOrDash(rceCalc, 3);
     const bodyfat  = Number.isFinite(bfNum) ? bfNum.toFixed(1) : '-';
 
-    // Texto do diagnóstico técnico (somente exibição)
+    // Texto do diagnóstico técnico
     const diagTexto = getDiagnosticoTexto(c, ultimaAval);
+
+    // ===== RESUMO 2 LINHAS =====
+    // construir séries numéricas para tendência (só leitura)
+    const seriePeso = (c.avaliacoes||[])
+      .map(a=>{
+        const p = pickNumericPreferAval(
+          a, c,
+          ['peso','Peso','Peso (kg)','peso (kg)','peso_kg','Qual é o seu peso?'],
+          [/^peso(\s|\(|$)/, /peso.*kg/, /^kg$/]
+        );
+        const n = parseNumber(p);
+        return Number.isFinite(n) ? n : undefined;
+      }).filter(Number.isFinite);
+
+    const serieRCQ = (c.avaliacoes||[])
+      .map(a => calcRCQWithFallback(c, a))
+      .filter(Number.isFinite);
+
+    const serieRCE = (c.avaliacoes||[])
+      .map(a => calcRCEWithFallback(c, a))
+      .filter(Number.isFinite);
+
+    const serieBF = (c.avaliacoes||[])
+      .map(a=>{
+        if (isNum(a.bodyfat)) return parseNumber(a.bodyfat);
+        const cintura = parseNumber(
+          pickNumericPreferAval(a, c, ['cintura','Cintura (cm)','cintura_cm'], [/cintur/]) ??
+          pickNumericPreferAval(a, c, ['abdomen','abdome','abdomem','abdominal','abdomen_cm','abdome_cm','Abdome (cm)','Abdomen (cm)'], [/abdom/])
+        );
+        const quadril = parseNumber(pickNumericPreferAval(a, c, ['quadril','Quadril (cm)','quadril_cm'], [/quadril/]));
+        const h = getAlturaFrom(c, a) ?? alturaCm;
+        const n = getPescocoFrom(c, a) ?? pescocoCm;
+        return navyBodyFatFemaleFromCm({ cintura_cm:cintura, quadril_cm:quadril, pescoco_cm:n, altura_cm:h });
+      }).filter(Number.isFinite);
+
+    const resumo2 = buildResumo2Linhas(
+      c, ultimaAval,
+      {
+        pesoVal: Number.isFinite(parseNumber(pesoRaw)) ? parseNumber(pesoRaw) : undefined,
+        rcqVal : Number.isFinite(rcqCalc) ? rcqCalc : undefined,
+        rceVal : Number.isFinite(rceCalc) ? rceCalc : undefined,
+        bfVal  : Number.isFinite(bfNum) ? bfNum : undefined
+      },
+      { peso: seriePeso, rcq: serieRCQ, rce: serieRCE, bf: serieBF }
+    );
 
     return `
       <style>
@@ -279,6 +384,7 @@ export const RelatorioView = {
         @media print{ .r-actions{display:none !important} body{background:#fff} .r-wrap{padding:0} .r-card{background:#fff} }
         .row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
         .just{ text-align: justify; }
+        .summary-2l{white-space:pre-line; font-size:.98rem; line-height:1.35}
       </style>
 
       <div class="r-wrap">
@@ -366,6 +472,12 @@ export const RelatorioView = {
             <div class="explain">Usa o valor reportado ou a estimativa (altura, pescoço, cintura, quadril).</div></div>
           <div id="bfEmpty" class="muted" style="display:none">Sem dados de %G suficientes.</div>
           <canvas id="chartBF" height="180"></canvas>
+        </div>
+
+        <!-- RESUMO 2 LINHAS -->
+        <div class="r-card avoid-break" style="margin-top:14px">
+          <h3 style="margin-top:0">Resumo (2 linhas)</h3>
+          <div class="summary-2l mono">${esc(resumo2)}</div>
         </div>
 
         <div class="r-card avoid-break" style="margin-top:14px">
