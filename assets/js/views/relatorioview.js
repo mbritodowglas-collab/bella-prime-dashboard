@@ -15,7 +15,14 @@ let bfChart   = null;
 function esc(s){ return String(s || '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m])); }
 function isNum(v){ return Number.isFinite(parseNumber(v)); }
 function nOrDash(v, d=0){ const n = parseNumber(v); return Number.isFinite(n) ? n.toFixed(d) : '-'; }
-function baseLineOptions(){ return { responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:false } } }; }
+function baseLineOptions(){
+  return {
+    responsive: true,
+    maintainAspectRatio: false, // <<< faz o canvas usar 100% da largura disponível
+    plugins: { legend: { display: false } },
+    scales: { y: { beginAtZero: false } }
+  };
+}
 function pick(obj, keys){ for (const k of keys){ const val = obj?.[k]; if (val != null && String(val).trim() !== '') return val; } return undefined; }
 
 // -------- parsing / normalização --------
@@ -158,14 +165,27 @@ function navyBodyFatFemaleFromCm({ cintura_cm, quadril_cm, pescoco_cm, altura_cm
 
 // -------- diagnóstico técnico --------
 function getDiagnosticoTexto(c, ultimaAval){
-  return (
+  const d =
     ultimaAval?.diagnostico_tecnico ??
     ultimaAval?.diagnostico ??
     ultimaAval?.parecer ??
     c?.diagnostico_tecnico ??
     c?._diagnostico_tecnico ??
     c?._ai_diagnostico ??
-    c?.ai_diagnostico ??
+    c?.ai_diagnostico;
+
+  if (d && String(d).trim()) return d;
+
+  // Fallback: último treino (caso a análise tenha sido salva junto do treino)
+  const lastTreino = (c.treinos||[])
+    .slice()
+    .sort((a,b)=> ((a.data_inicio||a.inicio||'').localeCompare(b.data_inicio||b.inicio||'')))
+    .pop();
+
+  return (
+    lastTreino?.diagnostico_tecnico ??
+    lastTreino?.diagnostico ??
+    lastTreino?.parecer ??
     ''
   );
 }
@@ -180,19 +200,14 @@ function trendWord(v2, v1, betterWhenLower=true, tol=0.001){
   const diff = v2 - v1;
   if (Math.abs(diff) <= tol) return 'estável';
   const goingDown = diff < 0;
-  // se "melhor quando menor", queda é "melhora"
-  if (betterWhenLower) return goingDown ? 'melhora' : 'piora';
-  // se melhor quando maior (ex.: peso em ganho de massa? aqui deixo neutro e uso só direção)
-  return goingDown ? 'queda' : 'alta';
+  return betterWhenLower ? (goingDown ? 'melhora' : 'piora') : (goingDown ? 'queda' : 'alta');
 }
 
 // -------- Resumo em 2 linhas (curto e direto) --------
 function buildResumo2Linhas(c, ultimaAval, {pesoVal, rcqVal, rceVal, bfVal}, series){
-  // flags simples
   const rcqFlag = Number.isFinite(rcqVal) ? (rcqVal <= 0.85 ? 'dentro da meta de RCQ' : 'RCQ acima do ideal') : null;
   const rceFlag = Number.isFinite(rceVal) ? (rceVal < 0.50 ? 'RCE < 0,50' : 'RCE ≥ 0,50') : null;
 
-  // zonas %G (mulheres, referência geral)
   let bfBucket = null;
   if (Number.isFinite(bfVal)){
     if (bfVal < 21) bfBucket = 'baixo a atlético';
@@ -201,25 +216,22 @@ function buildResumo2Linhas(c, ultimaAval, {pesoVal, rcqVal, rceVal, bfVal}, ser
     else bfBucket = 'elevado';
   }
 
-  // tendências
   const peso2 = lastTwo(series.peso);
   const rcq2  = lastTwo(series.rcq);
   const rce2  = lastTwo(series.rce);
   const bf2   = lastTwo(series.bf);
 
-  const tPeso = (peso2.length===2) ? trendWord(peso2[1], peso2[0], /*betterWhenLower?*/ true) : null;
+  const tPeso = (peso2.length===2) ? trendWord(peso2[1], peso2[0], true) : null;
   const tRCQ  = (rcq2.length===2)  ? trendWord(rcq2[1], rcq2[0], true) : null;
   const tRCE  = (rce2.length===2)  ? trendWord(rce2[1], rce2[0], true) : null;
   const tBF   = (bf2.length===2)   ? trendWord(bf2[1], bf2[0], true)   : null;
 
-  // linha 1: estado atual (RCQ, RCE, %G)
   const parts1 = [];
   if (Number.isFinite(rcqVal)) parts1.push(`RCQ ${rcqVal.toFixed(3)} (${rcqFlag})`);
   if (Number.isFinite(rceVal)) parts1.push(`RCE ${rceVal.toFixed(3)}${rceFlag ? ` (${rceFlag})` : ''}`);
   if (Number.isFinite(bfVal))  parts1.push(`%G ${bfVal.toFixed(1)}%${bfBucket ? ` (${bfBucket})` : ''}`);
   const linha1 = parts1.length ? parts1.join(' · ') : 'Sem dados suficientes para RCQ/RCE/%G.';
 
-  // linha 2: direção recente (tendência)
   const parts2 = [];
   if (tPeso) parts2.push(`peso ${tPeso}`);
   if (tRCQ)  parts2.push(`RCQ ${tRCQ}`);
@@ -319,7 +331,6 @@ export const RelatorioView = {
     const diagTexto = getDiagnosticoTexto(c, ultimaAval);
 
     // ===== RESUMO 2 LINHAS =====
-    // construir séries numéricas para tendência (só leitura)
     const seriePeso = (c.avaliacoes||[])
       .map(a=>{
         const p = pickNumericPreferAval(
@@ -380,8 +391,19 @@ export const RelatorioView = {
         .table th, .table td{padding:8px 10px}
         .avoid-break{page-break-inside:avoid}
         .explain{opacity:.85;font-size:.92rem}
-        .chart-card canvas{max-height:220px}
-        @media print{ .r-actions{display:none !important} body{background:#fff} .r-wrap{padding:0} .r-card{background:#fff} }
+        .chart-card canvas{
+          width:100% !important;        /* ocupa a largura inteira do card */
+          display:block;
+          height:240px;                 /* altura confortável na tela */
+          max-height:none;
+        }
+        @media print{
+          .r-actions{display:none !important}
+          body{background:#fff}
+          .r-wrap{padding:0}
+          .r-card{background:#fff}
+          .chart-card canvas{ height:260px; } /* um pouco maior no PDF */
+        }
         .row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
         .just{ text-align: justify; }
         .summary-2l{white-space:pre-line; font-size:.98rem; line-height:1.35}
@@ -516,7 +538,12 @@ export const RelatorioView = {
     const c = Store.byId(id);
     if (!c) return;
 
-    // ===== Peso (prioriza avaliação; cai para respostas) =====
+    // helper: garante largura do canvas antes de criar o chart
+    function prepCanvas(cv){
+      try{ cv.width = cv.parentElement?.clientWidth || cv.width; }catch{}
+    }
+
+    // ===== Peso =====
     const pesoCtx = document.getElementById('chartPeso');
     const pesoEmpty = document.getElementById('pesoEmpty');
     const seriePeso = (c.avaliacoes || [])
@@ -533,15 +560,17 @@ export const RelatorioView = {
       .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
     if (pesoChart) pesoChart.destroy();
     if (pesoCtx && seriePeso.length >= 1){
+      prepCanvas(pesoCtx);
       pesoChart = new Chart(pesoCtx, {
         type:'line',
         data:{ labels: seriePeso.map(a=>a.data||''), datasets:[{ label:'Peso (kg)', data: seriePeso.map(a=>a.pesoNum), tension:.35, borderWidth:3, borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,0.18)', fill:true, pointRadius:4, pointHoverRadius:6 }]},
         options: baseLineOptions()
       });
+      try{ pesoChart.resize(); }catch{}
       pesoEmpty && (pesoEmpty.style.display='none');
     } else { pesoEmpty && (pesoEmpty.style.display='block'); }
 
-    // ===== RCQ (cintura/quadril com fallback) =====
+    // ===== RCQ =====
     const rcqCtx = document.getElementById('chartRCQ');
     const rcqEmpty = document.getElementById('rcqEmpty');
     const serieRCQ = (c.avaliacoes || [])
@@ -550,6 +579,7 @@ export const RelatorioView = {
       .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
     if (rcqChart) rcqChart.destroy();
     if (rcqCtx && serieRCQ.length >= 1){
+      prepCanvas(rcqCtx);
       const labels = serieRCQ.map(a=>a.data || '');
       rcqChart = new Chart(rcqCtx, {
         type:'line',
@@ -559,10 +589,11 @@ export const RelatorioView = {
         ]},
         options: baseLineOptions()
       });
+      try{ rcqChart.resize(); }catch{}
       rcqEmpty && (rcqEmpty.style.display='none');
     } else { rcqEmpty && (rcqEmpty.style.display='block'); }
 
-    // ===== RCE (cintura/estatura com fallback) =====
+    // ===== RCE =====
     const rceCtx = document.getElementById('chartRCE');
     const rceEmpty = document.getElementById('rceEmpty');
     const note = document.getElementById('rceNote');
@@ -572,6 +603,7 @@ export const RelatorioView = {
       .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
     if (rceChart) rceChart.destroy();
     if (rceCtx && serieRCE.length >= 1){
+      prepCanvas(rceCtx);
       const labels = serieRCE.map(a=>a.data || '');
       rceChart = new Chart(rceCtx, {
         type:'line',
@@ -581,13 +613,14 @@ export const RelatorioView = {
         ]},
         options: { ...baseLineOptions(), scales:{ y:{ beginAtZero:false, suggestedMin:0.35, suggestedMax:0.8 } } }
       });
+      try{ rceChart.resize(); }catch{}
       rceEmpty && (rceEmpty.style.display='none');
     } else {
       rceEmpty && (rceEmpty.style.display='block');
       if (note){ note.style.display='block'; note.textContent = 'Para plotar RCE precisamos da “altura” (cm). Pode vir do Forms ou das respostas.'; }
     }
 
-    // ===== %G (reportado ou estimado) =====
+    // ===== %G =====
     const alturaGlobal = getAlturaFrom(c, {});
     const pescocoGlobal = getPescocoFrom(c, {});
     const bfCtx = document.getElementById('chartBF');
@@ -609,14 +642,24 @@ export const RelatorioView = {
       .sort((a,b)=> (a.data||'').localeCompare(b.data||''));
     if (bfChart) bfChart.destroy();
     if (bfCtx && serieBF.length >= 1){
+      prepCanvas(bfCtx);
       const labels = serieBF.map(a=>a.data || '');
       bfChart = new Chart(bfCtx, {
         type:'line',
         data:{ labels, datasets:[{ label:'%G', data: serieBF.map(a=>a.bfNum), tension:.35, borderWidth:3, borderColor:'#d4af37', backgroundColor:'rgba(212,175,55,.18)', fill:true, pointRadius:4, pointHoverRadius:6 }]},
         options: baseLineOptions()
       });
+      try{ bfChart.resize(); }catch{}
       bfEmpty && (bfEmpty.style.display='none');
     } else { bfEmpty && (bfEmpty.style.display='block'); }
+
+    // Reagir ao resize/print
+    window.addEventListener('resize', ()=>{
+      try{ pesoChart?.resize(); }catch{}
+      try{ rcqChart?.resize();  }catch{}
+      try{ rceChart?.resize();  }catch{}
+      try{ bfChart?.resize();   }catch{}
+    }, { passive:true });
   }
 };
 
