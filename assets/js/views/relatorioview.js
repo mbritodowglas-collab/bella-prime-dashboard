@@ -156,7 +156,7 @@ function navyBodyFatFemaleFromCm({ cintura_cm, quadril_cm, pescoco_cm, altura_cm
   return Number.isFinite(bf) ? bf : undefined;
 }
 
-// -------- diagnóstico técnico --------
+// -------- diagnóstico técnico (somente leitura p/ relatório) --------
 function getDiagnosticoTexto(c, ultimaAval){
   return (
     ultimaAval?.diagnostico_tecnico ??
@@ -255,7 +255,7 @@ export const RelatorioView = {
     const rce      = nOrDash(rceCalc, 3);
     const bodyfat  = Number.isFinite(bfNum) ? bfNum.toFixed(1) : '-';
 
-    // Texto do diagnóstico técnico
+    // Texto do diagnóstico técnico (somente exibição)
     const diagTexto = getDiagnosticoTexto(c, ultimaAval);
 
     return `
