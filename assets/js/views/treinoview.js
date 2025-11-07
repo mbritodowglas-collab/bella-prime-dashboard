@@ -127,7 +127,7 @@ function extrairRestricoes(ans){
   const linhas = Object.entries(ans||{});
   const picks = [];
 
-  // palavras-chave de locais/condições + mapeamento para frase amigável
+  // palavras-chave (busca somente no VALOR, não no rótulo da pergunta)
   const KW = [
     'quadril','lombar','costas','coluna','joelho','ombro','cervical','tornozelo','cotovelo','punho',
     'tendinite','condromalácia','hernia','hérnia','asma','hipertensão','pressão alta','diabetes','gestação','gravidez','cardíaco','cardiaco','rigidez','dor'
@@ -146,27 +146,40 @@ function extrairRestricoes(ans){
     rigidez: 'rigidez articular'
   };
 
-  for (const [k,vRaw] of linhas){
-    const kL = String(k||'').toLowerCase();
-    const v  = String(vRaw||'').toLowerCase();
+  for (const [, vRaw] of linhas){
+    const v = String(vRaw||'').toLowerCase().trim();
 
-    // perguntas do tipo "Qual lesão?/Onde dói?/Local da dor?"
-    const qLocal = /qual les[aã]o|onde d[óo]i|local da dor|regi[aã]o/.test(kL);
-    if (qLocal && v.trim()){
-      const kw = KW.find(w => v.includes(w));
-      picks.push(kw ? (LABEL[kw] || kw) : v.trim());
-      continue;
-    }
+    // ignora respostas vazias
+    if (!v) continue;
 
-    const marcouSim  = /(^|\b)(sim|tenho|possuo|diagnosticada|asma)(\b|$)/.test(v);
-    const matchKW    = KW.find(w => v.includes(w) || kL.includes(w));
+    // descarta exemplos
     const exemploTxt = /(exemplo|ex:|ex\.|por exemplo)/.test(v);
-    if ((marcouSim || matchKW) && !exemploTxt){
-      if (matchKW) picks.push(LABEL[matchKW] || matchKW);
+    if (exemploTxt) continue;
+
+    // negação explícita
+    const neg = /\b(n[aã]o|nenhum[ao]?|sem)\b/.test(v);
+    if (neg) continue;
+
+    // marcações afirmativas (sem "asma" aqui)
+    const marcouSim  = /\b(sim|tenho|possuo|diagnosticad[ao]s?)\b/.test(v);
+
+    // procurar termos apenas no VALOR
+    const encontrados = KW.filter(w => v.includes(w));
+
+    if (marcouSim || encontrados.length){
+      for (const kw of encontrados){
+        picks.push(LABEL[kw] || kw);
+      }
+      // se a pessoa descreveu dor sem palavra-chave mapeável, usa o texto cru
+      if (!encontrados.length && /dor/.test(v)) picks.push('dor');
     }
   }
 
-  const uniq = [...new Set(picks.map(s => s.replace(/\s+/g,' ').trim()))];
+  // remove “dor” genérica se já houver uma dor específica
+  const temEspecifica = picks.some(p => /^dor\s+(no|na)\s+/.test(p));
+  const final = temEspecifica ? picks.filter(p => p !== 'dor') : picks;
+
+  const uniq = [...new Set(final.map(s => s.replace(/\s+/g,' ').trim()))];
   return uniq.length ? `atenção a: ${uniq.join(', ')}` : '';
 }
 
