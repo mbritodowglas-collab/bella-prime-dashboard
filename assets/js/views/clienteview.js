@@ -1,5 +1,5 @@
 // ================================
-// VIEW: Perfil da Cliente (com %G, RCE e fallbacks FR1/FR2 + scan profundo + fuzzy em ultimaAval)
+// VIEW: Perfil da Cliente (com %G, RCE e fallbacks + Editor de Diagnóstico Técnico)
 // ================================
 import { Store, PROFESSOR_FORM_URL } from '../app.js';
 
@@ -226,6 +226,120 @@ async function waitForChart(maxTries=30){
   return false;
 }
 
+// ---------- Diagnóstico Técnico (gerador automático) ----------
+function classifyRangesMulher({ imc, rcq, rce, cintura, bf }) {
+  const flags = [];
+  if (Number.isFinite(rcq)) {
+    if (rcq > 0.85) flags.push(`RCQ ${rcq.toFixed(3)} acima do recomendado (≤ 0,85)`);
+    else flags.push(`RCQ ${rcq.toFixed(3)} dentro do recomendado`);
+  }
+  if (Number.isFinite(rce)) {
+    if (rce >= 0.50) flags.push(`RCE ${rce.toFixed(3)} elevado (meta < 0,50)`);
+    else flags.push(`RCE ${rce.toFixed(3)} adequado (< 0,50)`);
+  }
+  if (Number.isFinite(cintura)) {
+    if (cintura >= 88) flags.push(`Cintura ${cintura.toFixed(0)} cm: risco abdominal alto (≥ 88 cm)`);
+    else if (cintura >= 80) flags.push(`Cintura ${cintura.toFixed(0)} cm: risco aumentado (≥ 80 cm)`);
+    else flags.push(`Cintura ${cintura.toFixed(0)} cm: dentro do desejável`);
+  }
+  if (Number.isFinite(imc)) {
+    let cls = 'eutrofia';
+    if (imc < 18.5) cls = 'baixo peso';
+    else if (imc >= 25 && imc < 30) cls = 'sobrepeso';
+    else if (imc >= 30) cls = 'obesidade';
+    flags.push(`IMC ${imc.toFixed(1)} (${cls})`);
+  }
+  if (Number.isFinite(bf)) {
+    let nota = 'faixa moderada';
+    if (bf < 21) nota = 'baixo para a média populacional';
+    else if (bf > 33) nota = 'elevado para a média populacional';
+    flags.push(`%G ${bf.toFixed(1)} (${nota})`);
+  }
+  return flags;
+}
+
+function buildDiagnosticoTecnico(cliente, ultimaAval) {
+  const peso   = parseNumber(
+    ultimaAval?.peso ?? ultimaAval?.['Peso (kg)'] ?? ultimaAval?.peso_kg
+  );
+
+  const altura = (function(){
+    const raw = pickNumericPreferAval(
+      ultimaAval, cliente,
+      ['altura','Altura','Altura (cm)','altura_cm','Altura (m)','altura_m','estatura','Estatura (cm)'],
+      [/^altura(\s|\(|$)/, /estatura/, /altura.*(cm|m)/]
+    );
+    return parseLengthCm(raw);
+  })();
+
+  const cintura = parseNumber(
+    pickNumericPreferAval(ultimaAval, cliente, ['cintura','Cintura (cm)','cintura_cm'], [/cintur/])
+  );
+  const quadril = parseNumber(
+    pickNumericPreferAval(ultimaAval, cliente, ['quadril','Quadril (cm)','quadril_cm'], [/quadril/])
+  );
+  const abdome  = parseNumber(
+    pickNumericPreferAval(ultimaAval, cliente,
+      ['abdomen','abdome','abdomem','abdominal','abdomen_cm','abdome_cm','Abdome (cm)','Abdomen (cm)'],
+      [/abdom/]
+    )
+  );
+
+  const rcq = (Number.isFinite(cintura) && Number.isFinite(quadril) && quadril>0) ? cintura/quadril : undefined;
+  const rce = (Number.isFinite(cintura) && Number.isFinite(altura) && altura>0) ? (cintura/altura) : undefined;
+  const imc = (Number.isFinite(peso) && Number.isFinite(altura) && altura>0) ? peso / Math.pow(altura/100, 2) : undefined;
+
+  let bf = parseNumber(
+    pick(ultimaAval, [
+      'bodyfat','body_fat','bf','%g','g','percentual_gordura','gordura_percentual',
+      'gordura corporal','gordura corporal (%)','gordura corporal %','bf_marinha','bf_navy','body fat'
+    ])
+  );
+  if (!Number.isFinite(bf)) {
+    const pescoco = getPescocoFrom(cliente, ultimaAval);
+    const est = navyBodyFatFemaleFromCm({
+      cintura_cm: Number.isFinite(cintura) ? cintura : Number.isFinite(abdome) ? abdome : undefined,
+      quadril_cm: quadril,
+      pescoco_cm: pescoco,
+      altura_cm : altura
+    });
+    if (Number.isFinite(est)) bf = est;
+  }
+
+  const bullets = classifyRangesMulher({ imc, rcq, rce, cintura, bf });
+
+  const metas = [];
+  if (Number.isFinite(rce) && rce >= 0.50) metas.push('Reduzir RCE para < 0,50');
+  if (Number.isFinite(cintura) && cintura >= 80) metas.push('Reduzir cintura em 2–4 cm');
+  if (Number.isFinite(rcq) && rcq > 0.85) metas.push('Melhorar RCQ com foco em redução de circunferência abdominal');
+
+  const condutas = [
+    'Treino de força 3×/sem (multiarticulares + core anti-extensão/anti-rotação).',
+    'Cardio 2–3×/sem (intervalado moderado ou contínuo moderado, 20–30 min).',
+    'Hábitos: 7–9 h de sono, passos/dias ativos, hidratação adequada.'
+  ];
+
+  return [
+    'ACHADOS PRINCIPAIS:',
+    `• ${bullets.join('; ')}.`,
+    '',
+    'INTERPRETAÇÃO:',
+    '• Perfil compatível com foco em recomposição corporal e saúde cardiometabólica.',
+    '',
+    'CONDUTAS IMEDIATAS (4–6 semanas):',
+    `• ${condutas.join('\n• ')}`,
+    '',
+    'METAS (30 dias):',
+    `• ${ (metas.length ? metas.join('\n• ') : 'Manter consistência semanal e consolidar hábitos básicos.') }`,
+    '',
+    'CRITÉRIOS PARA PROGRESSÃO DE NÍVEL:',
+    '• Frequência ≥ 80%; técnica estável; redução de cintura/RCQ/RCE ou manutenção dentro das metas.',
+    '',
+    'OBSERVAÇÕES:',
+    '• Ajustes finos na reavaliação conforme resposta individual.'
+  ].join('\n');
+}
+
 // ============== VIEW ==============
 export const ClienteView = {
   async template(id){
@@ -253,7 +367,6 @@ export const ClienteView = {
       .pop() || {};
 
     // ---- MÉTRICAS COM FALLBACK (peso/altura/pescoço/circunferências) ----
-    // Peso: PRIORIDADE avaliação → fuzzy na avaliação → FR1/FR2 (com validação numérica)
     const pesoRaw = pickNumericPreferAval(
       ultimaAval, c,
       ['peso','Peso','Peso (kg)','peso (kg)','peso_kg','Qual é o seu peso?'],
@@ -283,13 +396,12 @@ export const ClienteView = {
     const rcqVal      = calcRCQWithFallback(c, ultimaAval);
     const rceVal      = calcRCEWithFallback(c, ultimaAval);
 
-    // %G reportado na avaliação?
+    // %G reportado?
     let bfNum = parseNumber(pick(ultimaAval, [
       "bodyfat","body_fat","bf","%g","g","percentual_gordura","gordura_percentual",
       "gordura corporal","gordura corporal (%)","gordura corporal %","bf_marinha","bf_navy","body fat"
     ]));
     if (!Number.isFinite(bfNum)){
-      // estima via Marinha
       const est = navyBodyFatFemaleFromCm({
         cintura_cm: parseNumber(cinturaRaw) ?? parseNumber(abdomeRaw),
         quadril_cm: parseNumber(quadrilRaw),
@@ -389,6 +501,12 @@ export const ClienteView = {
       </style>
     `;
     const quickBtn = `<button class="btn btn-outline" id="quickMsgBtn">💬 Mensagens rápidas</button>`;
+    const diagBtn  = `<button class="btn btn-outline" id="btnDiag">✍️ Diagnóstico técnico</button>`;
+
+    // pega o texto já salvo para mostrar no modal ao abrir
+    const diagTextoExistente =
+      ultimaAval?.diagnostico_tecnico || ultimaAval?.diagnostico || ultimaAval?.parecer ||
+      c?.diagnostico_tecnico || '';
 
     return `
       ${modalCSS}
@@ -409,6 +527,7 @@ export const ClienteView = {
         <div class="row" style="gap:10px;margin-top:12px">
           ${ctaProfessor}
           <a class="btn btn-outline" href="#/relatorio/${c.id}">🧾 Relatório (A4)</a>
+          ${diagBtn}
           ${quickBtn}
         </div>
       </section>
@@ -480,7 +599,7 @@ export const ClienteView = {
       <section class="card chart-card">
         <div class="row" style="justify-content:space-between;align-items:flex-end;">
           <h3 style="margin:0">%G (Protocolo Marinha EUA)</h3>
-        <small style="opacity:.85">Usa valor do Forms ou estimativa (altura, pescoço, cintura, quadril).</small>
+          <small style="opacity:.85">Usa valor do Forms ou estimativa (altura, pescoço, cintura, quadril).</small>
         </div>
         <div id="bfEmpty" style="display:none;color:#aaa">Sem dados de %G suficientes.</div>
         <canvas id="chartBF" height="160" style="width:100%;height:240px;display:block"></canvas>
@@ -505,7 +624,23 @@ export const ClienteView = {
 
       ${blocoRespostas}
 
-      <!-- Modal de Mensagens Rápidas (conteúdo igual ao seu atual) -->
+      <!-- Modal de Diagnóstico Técnico -->
+      <div class="modal-backdrop" id="diagBackdrop"></div>
+      <div class="modal" id="diagModal" aria-hidden="true">
+        <div class="modal-card">
+          <div class="modal-header">
+            <h3 style="margin:0">Diagnóstico técnico</h3>
+            <button class="btn btn-outline" id="diagClose">Fechar</button>
+          </div>
+          <textarea id="diagText" rows="16" style="width:100%;font-family:ui-monospace,monospace">${escapePlain(diagTextoExistente||'')}</textarea>
+          <div class="row" style="margin-top:10px">
+            <button class="btn btn-primary" id="diagSave">Salvar</button>
+            <button class="btn btn-outline" id="diagAuto">Gerar automático</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal de Mensagens Rápidas (placeholder do seu atual) -->
       <div class="modal-backdrop" id="msgBackdrop"></div>
       <div class="modal" id="msgModal" aria-hidden="true">
         <!-- ... -->
@@ -537,12 +672,61 @@ export const ClienteView = {
       });
     }
 
+    // ====== Editor de Diagnóstico técnico ======
+    const btnDiag   = document.getElementById('btnDiag');
+    const diagModal = document.getElementById('diagModal');
+    const diagBack  = document.getElementById('diagBackdrop');
+    const diagClose = document.getElementById('diagClose');
+    const diagAuto  = document.getElementById('diagAuto');
+    const diagSave  = document.getElementById('diagSave');
+
+    function openDiag(){
+      diagModal?.classList.add('show');
+      diagBack?.classList.add('show');
+    }
+    function closeDiag(){
+      diagModal?.classList.remove('show');
+      diagBack?.classList.remove('show');
+    }
+
+    btnDiag?.addEventListener('click', openDiag);
+    diagClose?.addEventListener('click', closeDiag);
+    diagBack?.addEventListener('click', closeDiag);
+
+    diagAuto?.addEventListener('click', ()=>{
+      const cli = Store.byId(id);
+      const ultima = (cli?.avaliacoes||[]).slice().sort((a,b)=>(a.data||'').localeCompare(b.data||'')).pop() || {};
+      const txt = buildDiagnosticoTecnico(cli, ultima);
+      const ta = document.getElementById('diagText');
+      if (ta) ta.value = txt;
+    });
+
+    diagSave?.addEventListener('click', ()=>{
+      const cli = Store.byId(id);
+      if (!cli) return;
+      const ta = document.getElementById('diagText');
+      const texto = ta ? String(ta.value||'') : '';
+      const avals = Array.isArray(cli.avaliacoes) ? cli.avaliacoes.slice() : [];
+      if (avals.length){
+        const idx = avals
+          .map((a,i)=>({i,a}))
+          .sort((x,y)=>(x.a.data||'').localeCompare(y.a.data||''))
+          .pop().i;
+        avals[idx] = { ...avals[idx], diagnostico_tecnico: texto };
+      }
+      cli.avaliacoes = avals;
+      cli.diagnostico_tecnico = texto; // redundância útil
+      Store.upsert(cli);
+      closeDiag();
+      alert('Diagnóstico técnico salvo no último lançamento.');
+    });
+
     // ======= Aguarda o Chart.js estar disponível =======
     const ok = await waitForChart();
     if (!ok) return;
 
     // ========== Gráficos ==========
-    // Peso — PRIORIDADE avaliação; depois FR1/FR2; com validação numérica
+    // Peso
     const pesoCtx = document.getElementById('chartPeso');
     const pesoEmpty = document.getElementById('pesoEmpty');
     const seriePeso = (c.avaliacoes || [])
@@ -577,7 +761,7 @@ export const ClienteView = {
       if (pesoEmpty) pesoEmpty.style.display = 'none';
     } else if (pesoEmpty) { pesoEmpty.style.display = 'block'; }
 
-    // RCQ (fallback em cada ponto da série)
+    // RCQ (fallback em cada ponto)
     const rcqCtx = document.getElementById('chartRCQ');
     const rcqEmpty = document.getElementById('rcqEmpty');
     const serieRCQ = (c.avaliacoes || [])
@@ -630,7 +814,7 @@ export const ClienteView = {
       if (rceEmpty) rceEmpty.style.display = 'none';
     } else if (rceEmpty) { rceEmpty.style.display = 'block'; }
 
-    // %G (reportado OU estimado; usa fallbacks para cintura/quadril/altura/pescoço)
+    // %G (reportado OU estimado; usa fallbacks)
     const alturaGlobal = getAlturaFrom(c, {});
     const pescocoGlobal = getPescocoFrom(c, {});
     const bfCtx = document.getElementById('chartBF');
