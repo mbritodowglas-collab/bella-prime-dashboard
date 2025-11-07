@@ -611,7 +611,7 @@ export const RelatorioView = {
 
     // ===== %G =====
     const alturaGlobal = getAlturaFrom(c, {});
-    thePescocoGlobal = getPescocoFrom(c, {});
+    const pescocoGlobal = getPescocoFrom(c, {}); // <- FIX aqui
     const bfCtx = document.getElementById('chartBF');
     const bfEmpty = document.getElementById('bfEmpty');
     const serieBF = (c.avaliacoes || [])
@@ -623,7 +623,7 @@ export const RelatorioView = {
         );
         const quadril = parseNumber(pickNumericPreferAval(a, c, ['quadril','Quadril (cm)','quadril_cm'], [/quadril/]));
         const h = getAlturaFrom(c, a) ?? alturaGlobal;
-        const n = getPescocoFrom(c, a) ?? thePescocoGlobal;
+        const n = getPescocoFrom(c, a) ?? pescocoGlobal; // <- FIX aqui
         const est = navyBodyFatFemaleFromCm({ cintura_cm:cintura, quadril_cm:quadril, pescoco_cm:n, altura_cm:h });
         return Number.isFinite(est) ? { ...a, bfNum: est } : a;
       })
