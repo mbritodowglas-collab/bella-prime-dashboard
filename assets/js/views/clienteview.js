@@ -340,6 +340,81 @@ function buildDiagnosticoTecnico(cliente, ultimaAval) {
   ].join('\n');
 }
 
+// >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+// >>> NEW (APENAS): helpers e mensagens rápidas com nome automático
+// >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+function firstName(full){
+  const n = String(full||'').trim().split(/\s+/)[0]||'';
+  return n.charAt(0).toUpperCase() + n.slice(1);
+}
+function onlyDigits(s){ return String(s||'').replace(/\D+/g,''); }
+function phoneE164(brPhone){
+  const d = onlyDigits(brPhone);
+  if (!d) return '';
+  if (d.startsWith('55')) return `+${d}`;
+  if (d.length === 11 || d.length === 10) return `+55${d}`;
+  return `+${d}`;
+}
+function waLink(phone, text){
+  const p = phoneE164(phone);
+  const t = encodeURIComponent(text);
+  return p ? `https://wa.me/${p}?text=${t}` : `https://wa.me/?text=${t}`;
+}
+function buildQuickMessages(cliente, ultimaAval){
+  const nome = firstName(cliente?.nome);
+  const assinatura = '— Márcio, seu treinador';
+  const medidasLista = 'pescoço, cintura, abdome e quadril';
+  return [
+    {
+      id:'boas-vindas',
+      title:'Boas-vindas + alinhamento',
+      text:
+`${nome}, recebi suas respostas aqui e já abri sua ficha. Obrigado pela confiança! 🙌
+Vou preparar seu diagnóstico técnico com base no que você me contou e nos dados que já tenho.
+Qualquer detalhe que você lembrar pode me mandar aqui mesmo. ${assinatura}`
+    },
+    {
+      id:'fotos-medidas',
+      title:'Solicitar 3 fotos + 4 medidas',
+      text:
+`${nome}, consigo deixar seu diagnóstico muito mais preciso com 3 fotos (frente, lado e costas) usando roupas em que você se sinta confortável — e luz de frente ajuda bastante. 📷
+
+Se não quiser enviar fotos, tudo bem: me envie só as medidas de ${medidasLista}, em centímetros, como você costuma medir a fita na pele.
+
+Fico no aguardo para fechar seu relatório. ${assinatura}`
+    },
+    {
+      id:'faltou-medidas',
+      title:'Lembrete gentil de medidas',
+      text:
+`${nome}, passando rapidinho para fechar seu relatório: pode me enviar as medidas de ${medidasLista} (em cm)?
+Se preferir, posso te orientar por áudio de 1 min sobre como medir. 😉 ${assinatura}`
+    },
+    {
+      id:'agradecimento-prazo',
+      title:'Agradecimento + próximo passo',
+      text:
+`Perfeito, ${nome}! Recebi aqui — obrigado pela agilidade. 🙏
+Vou cruzar tudo com seus objetivos e te envio o diagnóstico técnico com os pontos-chave e as primeiras correções. ${assinatura}`
+    },
+    {
+      id:'pos-diag-convite',
+      title:'Pós-diagnóstico: convite para ligação (2 min)',
+      text:
+`${nome}, finalizei seu diagnóstico e identifiquei pontos importantes que explicam o que vem te travando.
+Posso te ligar por **2 min** para te explicar (bem direto) e já te apresentar as soluções mais eficientes para o seu caso? ☎️🙂 ${assinatura}`
+    },
+    {
+      id:'pos-diag-confirmacao',
+      title:'Pós-diagnóstico: confirmação de melhor horário',
+      text:
+`${nome}, seu diagnóstico está pronto! Quero te explicar por voz de forma rápida e clara o que o relatório mostra e qual caminho seguir.
+Pode ser **agora** ou **mais tarde**? Eu me ajusto a você — prometo ser objetivo (2 min). 📞 ${assinatura}`
+    }
+  ];
+}
+// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
 // ============== VIEW ==============
 export const ClienteView = {
   async template(id){
@@ -640,10 +715,30 @@ export const ClienteView = {
         </div>
       </div>
 
-      <!-- Modal de Mensagens Rápidas (placeholder do seu atual) -->
+      <!-- Modal de Mensagens Rápidas -->
       <div class="modal-backdrop" id="msgBackdrop"></div>
       <div class="modal" id="msgModal" aria-hidden="true">
-        <!-- ... -->
+        <div class="modal-card">
+          <div class="modal-header">
+            <h3 style="margin:0">Mensagens rápidas</h3>
+            <button class="btn btn-outline" id="msgClose">Fechar</button>
+          </div>
+          <div class="modal-grid">
+            ${(() => {
+              const msgs = buildQuickMessages(c, ultimaAval);
+              return msgs.map(m => `
+                <div class="msg-item" data-msg-id="${m.id}">
+                  <p class="msg-title">${escapeHTML(m.title)}</p>
+                  <pre class="msg-text" id="msgtext-${m.id}" style="white-space:pre-wrap">${escapeHTML(m.text)}</pre>
+                  <div class="msg-actions">
+                    <button class="btn btn-primary btn-send-wa" data-msg-id="${m.id}">Enviar no WhatsApp</button>
+                    <button class="btn btn-outline btn-copy-msg" data-msg-id="${m.id}">Copiar</button>
+                  </div>
+                </div>
+              `).join('');
+            })()}
+          </div>
+        </div>
       </div>
     `;
   },
@@ -720,6 +815,47 @@ export const ClienteView = {
       closeDiag();
       alert('Diagnóstico técnico salvo no último lançamento.');
     });
+
+    // >>> NEW: modal de Mensagens rápidas (apenas esta seção adicionada)
+    const quickBtnOpen = document.getElementById('quickMsgBtn');
+    const msgModal = document.getElementById('msgModal');
+    const msgBack  = document.getElementById('msgBackdrop');
+    const msgClose = document.getElementById('msgClose');
+
+    function openMsg(){ msgModal?.classList.add('show'); msgBack?.classList.add('show'); }
+    function closeMsg(){ msgModal?.classList.remove('show'); msgBack?.classList.remove('show'); }
+
+    quickBtnOpen?.addEventListener('click', openMsg);
+    msgClose?.addEventListener('click', closeMsg);
+    msgBack?.addEventListener('click', closeMsg);
+
+    document.querySelectorAll('.btn-copy-msg').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const id = btn.getAttribute('data-msg-id');
+        const pre = document.getElementById(`msgtext-${id}`);
+        if (!pre) return;
+        const r = document.createRange();
+        r.selectNodeContents(pre);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(r);
+        try { document.execCommand('copy'); } catch {}
+        sel.removeAllRanges();
+        btn.textContent = 'Copiado!';
+        setTimeout(()=> btn.textContent = 'Copiar', 1200);
+      });
+    });
+
+    document.querySelectorAll('.btn-send-wa').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const id = btn.getAttribute('data-msg-id');
+        const pre = document.getElementById(`msgtext-${id}`);
+        const txt = pre ? pre.textContent : '';
+        const link = waLink(c?.contato||'', txt);
+        window.open(link, '_blank', 'noopener');
+      });
+    });
+    // <<< NEW (fim) >>>
 
     // ======= Aguarda o Chart.js estar disponível =======
     const ok = await waitForChart();
