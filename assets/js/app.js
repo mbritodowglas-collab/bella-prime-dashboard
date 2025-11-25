@@ -226,7 +226,8 @@ export const Store = {
         return o;
       };
 
-      const registros = (brutos || []).map(raw => {
+      // aqui cada linha recebe um índice seq (ordem que veio do Sheets)
+      const registros = (brutos || []).map((raw, idx) => {
         const o = normRow(raw);
 
         // Identificação
@@ -248,12 +249,11 @@ export const Store = {
         const nivelIn  = pick(o, ['nivel','nível','fase','faixa']);
 
         // ---- MÉTRICAS (fuzzy/robusto) ----
-        // Regex mais amplos para casar variantes, inclusive "(cm)" / "(m)" e "circ ..."
         const pesoN     = toNum(pickByRegex(o, [/^peso(?:[^a-z0-9].*)?$/, /\bpeso\s*\(kg\)/]));
         const cinturaN  = toNum(pickByRegex(o, [/(?:^|[^a-z])cintura(?:[^a-z0-9].*)?$/]));
         const quadrilN  = toNum(pickByRegex(o, [/(?:^|[^a-z])quadril(?:[^a-z0-9].*)?$/]));
 
-        // Altura/Estatura: aceita "altura", "altura (cm)", "altura (m)", "estatura", "height"
+        // Altura/Estatura
         let alturaN  = toNum(pickByRegex(o, [
           /(?:^|[^a-z])altura(?:[^a-z0-9].*)?$/,
           /(?:^|[^a-z])estatura(?:[^a-z0-9].*)?$/,
@@ -262,7 +262,7 @@ export const Store = {
         ]));
         if (Number.isFinite(alturaN) && alturaN <= 3) alturaN = alturaN * 100; // metros → cm
 
-        // Abdome: várias grafias
+        // Abdome
         const abdomenN  = toNum(pickByRegex(o, [
           /(?:^|[^a-z])abdome(?:[^a-z0-9].*)?$/,
           /(?:^|[^a-z])abdomen(?:[^a-z0-9].*)?$/,
@@ -271,7 +271,7 @@ export const Store = {
           /perimetro abdominal/, /circunferencia abdominal/
         ]));
 
-        // Pescoço: “pescoco”, “pescoço (cm)”, “circunferencia do pescoco…”
+        // Pescoço
         const pescocoN  = toNum(pickByRegex(o, [
           /(?:^|[^a-z])pescoco(?:[^a-z0-9].*)?$/,
           /circ.*pescoco/
@@ -316,7 +316,8 @@ export const Store = {
           renovacaoDias: Number(pick(o,['renovacaodias','renovacao','ciclodias'])) || 30,
           avaliacoes: [],
           treinos: [],
-          _answers: collectAnswersFromRaw(raw) // mantém tudo, inclusive métricas
+          _answers: collectAnswersFromRaw(raw), // mantém tudo, inclusive métricas
+          _seq: idx // <- ordem de chegada da linha
         };
 
         // --- Detecta Form do Professor (upgrade) ---
@@ -378,9 +379,14 @@ export const Store = {
       // colapsa por id (mantém histórico)
       const map = new Map();
       for (const r of registros) {
-        if (!map.has(r.id)) { map.set(r.id, r); continue; }
+        if (!map.has(r.id)) { 
+          map.set(r.id, r); 
+          continue; 
+        }
         const dst = map.get(r.id);
-        for (const f of ['nome','contato','email','cidade']) if (!dst[f] && r[f]) dst[f] = r[f];
+        for (const f of ['nome','contato','email','cidade']) {
+          if (!dst[f] && r[f]) dst[f] = r[f];
+        }
         // merge answers (mantendo métricas disponíveis ao Perfil)
         if (r._answers) dst._answers = Object.assign({}, dst._answers || {}, r._answers);
         dst.avaliacoes = [...(dst.avaliacoes||[]), ...(r.avaliacoes||[])];
@@ -389,6 +395,8 @@ export const Store = {
           if (!Array.isArray(dst._allUpgrades)) dst._allUpgrades = [];
           dst._allUpgrades.push(r._upgradeEvent);
         }
+        // mantém o _seq mais recente
+        dst._seq = Math.max(dst._seq ?? 0, r._seq ?? 0);
       }
 
       // ordena histórico + flags + última avaliação consistente
@@ -444,15 +452,9 @@ export const Store = {
     const { q='', nivel='', status='' } = this.state.filters || {};
     return [...this.state.clientes]
       .sort((a,b)=> {
-        const da = a.ultimoTreino || '';
-        const db = b.ultimoTreino || '';
-
-        // Mais recente primeiro
-        if (da && db && da !== db) {
-          return db.localeCompare(da); // decrescente por data
-        }
-
-        // Empate de data → ordem alfabética por nome
+        const sa = a._seq ?? 0;
+        const sb = b._seq ?? 0;
+        if (sa !== sb) return sb - sa; // mais recente (maior seq) primeiro
         return (a.nome||'').localeCompare(b.nome||'','pt',{sensitivity:'base'});
       })
       .filter(c => !q     || (c.nome||'').toLowerCase().includes(q.toLowerCase()))
@@ -624,7 +626,7 @@ html,body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,s
 .card{background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.01));border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;box-shadow:var(--shadow);backdrop-filter:saturate(1.1) blur(2px);margin-bottom:14px;}
 .input{width:100%;height:44px;border-radius:12px;padding:0 12px;border:1px solid var(--border);background:#111316;color:#e9eaee;font-size:.95rem;}
 .input:focus{outline:none;border-color:#3a3f47;box-shadow:0 0 0 2px rgba(198,40,40,.12);}
-.btn{--h:44px;min-width:44px;height:var(--h);line-height:var(--h);display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:12px;padding:0 14px;font-weight:600;letter-spacing:.2px;border:1px solid var(--border);background:#14161a;color:#e9eaee;transition:transform .08s ease,filter .12s ease,background .2s ease,border-color .2s ease;cursor:pointer;text-decoration:none;}
+.btn{--h:44px;min-width:44px;height:var(--h);line-height:var(--h);display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:12px;padding:0 14px;font-weight:600;letter-spacing:.2px;border:1px solid var(--border);background:#14161a;color:#e9eaee;transition:transform .08s.ease,filter .12s ease,background .2s ease,border-color .2s.ease;cursor:pointer;text-decoration:none;}
 .btn:hover{filter:brightness(1.08);} .btn:active{transform:translateY(1px);}
 .btn-primary{background:var(--primary);border-color:var(--primary-2);color:#fff;} .btn-primary:hover{background:var(--primary-2);} .btn-primary:active{background:var(--primary-3);}
 .btn-outline{background:transparent;} .btn-danger{background:#a32622;border-color:#8e1f1b;color:#fff;} .btn-success{background:var(--ok);border-color:#1a7b46;color:#fff;}
