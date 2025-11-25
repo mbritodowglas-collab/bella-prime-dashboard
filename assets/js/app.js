@@ -321,20 +321,56 @@ export const Store = {
         };
 
         // --- Detecta Form do Professor (upgrade) ---
-        const novoNivelRaw = pick(o, [
-          'novo_nivel','novonivel','nivel_novo','nivel aprovado','nivel_aprovado','nivel_definido'
-        ]);
-        const aprovadoRaw = pick(o, [
-          'aprovado','aprovacao','aprovação','aprovacao_professor','ok','apto','apta'
-        ]);
-        const dataDecRaw  = pick(o, ['data_decisao','data_upgrade','data_mudanca','data da decisao']);
-        const obsProf     = pick(o, ['observacao_professor','observacao','comentario']);
+        const obsProf = pick(o, ['observacao_professor','observacao','comentario']);
 
-        if (novoNivelRaw) {
-          const aprovado = /^s(?!$)|^sim$|^ok$|^true$|^aprov/i.test(String(aprovadoRaw||''));
-          const novoNivel = normNivel(novoNivelRaw) || novoNivelRaw;
-          const dataUpISO = toISODateMaybe(dataDecRaw) || todayISO();
-          base._upgradeEvent = { aprovado, novoNivel, data: dataUpISO, obs: obsProf || '' };
+        // helper pra interpretar "Sim / apto / apta"
+        const isYes = (v) => {
+          if (!v) return false;
+          const s = String(v).toLowerCase();
+          return /sim|apto|apta|sim\./.test(s);
+        };
+
+        let upgradeNivel = null;
+        let upgradeDataISO = todayISO();
+
+        // Se vier da aba de professor (Form Responses 3), usamos as perguntas específicas
+        if (raw && raw.__tab === 'Form Responses 3') {
+          const ascRaw  = pickByRegex(o, [/apto.*ascensao/]);   // "Apto (a) para mudar para ascensão?"
+          const domRaw  = pickByRegex(o, [/apta?.*dominio/]);   // "Apta para subir para Domínio?"
+          const overRaw = pickByRegex(o, [/apta?.*overprime/]); // "Apta para ser OVERPRIME?"
+
+          // hierarquia: OverPrime > Domínio > Ascensão
+          if (isYes(overRaw))      upgradeNivel = 'OverPrime';
+          else if (isYes(domRaw))  upgradeNivel = 'Domínio';
+          else if (isYes(ascRaw))  upgradeNivel = 'Ascensão';
+
+          const dataDecRaw = pick(o, ['data_decisao','data_upgrade','data_mudanca','data da decisao','data']);
+          upgradeDataISO = toISODateMaybe(dataDecRaw) || toISODateMaybe(base.ultimoTreino) || todayISO();
+        } else {
+          // fallback genérico (caso você um dia use outro tipo de form de professor)
+          const novoNivelRaw = pick(o, [
+            'novo_nivel','novonivel','nivel_novo','nivel aprovado','nivel_aprovado','nivel_definido'
+          ]);
+          const aprovadoRaw = pick(o, [
+            'aprovado','aprovacao','aprovação','aprovacao_professor','ok','apto','apta'
+          ]);
+          const dataDecRaw  = pick(o, ['data_decisao','data_upgrade','data_mudanca','data da decisao']);
+          if (novoNivelRaw) {
+            const aprovado = /^s(?!$)|^sim$|^ok$|^true$|^aprov/i.test(String(aprovadoRaw||''));
+            if (aprovado) {
+              upgradeNivel = normNivel(novoNivelRaw) || novoNivelRaw;
+              upgradeDataISO = toISODateMaybe(dataDecRaw) || todayISO();
+            }
+          }
+        }
+
+        if (upgradeNivel) {
+          base._upgradeEvent = {
+            aprovado: true,
+            novoNivel: upgradeNivel,
+            data: upgradeDataISO,
+            obs: obsProf || ''
+          };
         }
 
         // --- Pontuação automática fallback ---
