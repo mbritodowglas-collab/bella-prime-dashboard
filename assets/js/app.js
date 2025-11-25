@@ -443,7 +443,18 @@ export const Store = {
   list(){
     const { q='', nivel='', status='' } = this.state.filters || {};
     return [...this.state.clientes]
-      .sort((a,b)=> (a.nome||'').localeCompare(b.nome||'','pt',{sensitivity:'base'}))
+      .sort((a,b)=> {
+        const da = a.ultimoTreino || '';
+        const db = b.ultimoTreino || '';
+
+        // Mais recente primeiro
+        if (da && db && da !== db) {
+          return db.localeCompare(da); // decrescente por data
+        }
+
+        // Empate de data → ordem alfabética por nome
+        return (a.nome||'').localeCompare(b.nome||'','pt',{sensitivity:'base'});
+      })
       .filter(c => !q     || (c.nome||'').toLowerCase().includes(q.toLowerCase()))
       .filter(c => !nivel || c.nivel === nivel)
       .filter(c => !status|| statusCalc(c).label === status);
