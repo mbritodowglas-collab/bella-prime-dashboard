@@ -46,25 +46,6 @@ function toISODateMaybe(s){
   return undefined;
 }
 
-// Converte timestamp do Forms → ISO datetime (AAAA-MM-DDTHH:MM:SS)
-function toISODateTimeMaybe(s){
-  if (!s) return undefined;
-  const t = String(s).trim();
-
-  // Já está em ISO completo?
-  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(t)) return t;
-
-  // Formato típico do Google Forms em PT-BR:
-  // "25/11/2025 14:32:05" ou "25/11/2025 14:32"
-  const m = t.match(
-    /^(\d{2})[\/\-](\d{2})[\/\-](\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?$/
-  );
-  if (!m) return undefined;
-
-  const [, dd, mm, yyyy, HH='12', MM='00', SS='00'] = m;
-  return `${yyyy}-${mm}-${dd}T${HH}:${MM}:${SS}`;
-}
-
 // ---------- Utils ----------
 function cryptoId(){
   try { return crypto.randomUUID(); }
@@ -245,6 +226,7 @@ export const Store = {
         return o;
       };
 
+      // aqui cada linha recebe um índice seq (ordem que veio do Sheets)
       const registros = (brutos || []).map((raw, idx) => {
         const o = normRow(raw);
 
@@ -258,17 +240,6 @@ export const Store = {
         const cidade = pick(o, [
           'cidade-estado','cidade - estado','cidade/estado','cidade uf','cidadeuf','cidade'
         ]) || '';
-
-        // Timestamp do Forms
-        const tsRaw = pick(o, [
-          'timestamp',
-          'carimbo de data/hora',
-          'carimbo de data e hora',
-          'data/hora',
-          'data hora',
-          'data e hora'
-        ]);
-        const tsISO = toISODateTimeMaybe(tsRaw);
 
         // Avaliação base
         const dataAvalRaw = pick(o, ['data','dataavaliacao','ultimotreino']);
@@ -346,7 +317,7 @@ export const Store = {
           avaliacoes: [],
           treinos: [],
           _answers: collectAnswersFromRaw(raw), // mantém tudo, inclusive métricas
-          _ts: tsISO || (dataAvalISO ? `${dataAvalISO}T12:00:00` : null) // timestamp de referência
+          _seq: idx // <- ordem de chegada da linha
         };
 
         // --- Detecta Form do Professor (upgrade) ---
@@ -408,9 +379,9 @@ export const Store = {
       // colapsa por id (mantém histórico)
       const map = new Map();
       for (const r of registros) {
-        if (!map.has(r.id)) {
-          map.set(r.id, r);
-          continue;
+        if (!map.has(r.id)) { 
+          map.set(r.id, r); 
+          continue; 
         }
         const dst = map.get(r.id);
         for (const f of ['nome','contato','email','cidade']) {
@@ -424,10 +395,8 @@ export const Store = {
           if (!Array.isArray(dst._allUpgrades)) dst._allUpgrades = [];
           dst._allUpgrades.push(r._upgradeEvent);
         }
-        // mantém o timestamp mais recente
-        if (r._ts && (!dst._ts || r._ts > dst._ts)) {
-          dst._ts = r._ts;
-        }
+        // mantém o _seq mais recente
+        dst._seq = Math.max(dst._seq ?? 0, r._seq ?? 0);
       }
 
       // ordena histórico + flags + última avaliação consistente
@@ -483,9 +452,9 @@ export const Store = {
     const { q='', nivel='', status='' } = this.state.filters || {};
     return [...this.state.clientes]
       .sort((a,b)=> {
-        const ta = a._ts || '';
-        const tb = b._ts || '';
-        if (ta !== tb) return tb.localeCompare(ta); // mais recente primeiro
+        const sa = a._seq ?? 0;
+        const sb = b._seq ?? 0;
+        if (sa !== sb) return sb - sa; // mais recente (maior seq) primeiro
         return (a.nome||'').localeCompare(b.nome||'','pt',{sensitivity:'base'});
       })
       .filter(c => !q     || (c.nome||'').toLowerCase().includes(q.toLowerCase()))
@@ -657,7 +626,7 @@ html,body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,s
 .card{background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.01));border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;box-shadow:var(--shadow);backdrop-filter:saturate(1.1) blur(2px);margin-bottom:14px;}
 .input{width:100%;height:44px;border-radius:12px;padding:0 12px;border:1px solid var(--border);background:#111316;color:#e9eaee;font-size:.95rem;}
 .input:focus{outline:none;border-color:#3a3f47;box-shadow:0 0 0 2px rgba(198,40,40,.12);}
-.btn{--h:44px;min-width:44px;height:var(--h);line-height:var(--h);display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:12px;padding:0 14px;font-weight:600;letter-spacing:.2px;border:1px solid var(--border);background:#14161a;color:#e9eaee;transition:transform .08s ease,filter .12s ease,background .2s ease,border-color .2s ease;cursor:pointer;text-decoration:none;}
+.btn{--h:44px;min-width:44px;height:var(--h);line-height:var(--h);display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:12px;padding:0 14px;font-weight:600;letter-spacing:.2px;border:1px solid var(--border);background:#14161a;color:#e9eaee;transition:transform .08s.ease,filter .12s ease,background .2s ease,border-color .2s.ease;cursor:pointer;text-decoration:none;}
 .btn:hover{filter:brightness(1.08);} .btn:active{transform:translateY(1px);}
 .btn-primary{background:var(--primary);border-color:var(--primary-2);color:#fff;} .btn-primary:hover{background:var(--primary-2);} .btn-primary:active{background:var(--primary-3);}
 .btn-outline{background:transparent;} .btn-danger{background:#a32622;border-color:#8e1f1b;color:#fff;} .btn-success{background:var(--ok);border-color:#1a7b46;color:#fff;}
