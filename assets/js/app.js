@@ -87,7 +87,7 @@ function pickByRegex(obj, regexArr){
 
 const normNivel = (x='') => {
   const n = strip(x);
-  if (n.startsWith('fund')) return 'Fundacao'.replace('cao','ção'); // apenas para evitar linter
+  if (n.startsWith('fund')) return 'Fundacao'.replace('cao','ção'); // gambizinha pra virar "Fundação"
   if (n.startsWith('asc'))  return 'Ascensão';
   if (n.startsWith('dom'))  return 'Domínio';
   if (n.startsWith('over')) return 'OverPrime';
@@ -321,56 +321,43 @@ export const Store = {
         };
 
         // --- Detecta Form do Professor (upgrade) ---
-        const obsProf = pick(o, ['observacao_professor','observacao','comentario']);
+        let novoNivelRaw = pick(o, [
+          'novo_nivel','novonivel','nivel_novo','nivel aprovado','nivel_aprovado','nivel_definido'
+        ]);
+        let aprovadoRaw = pick(o, [
+          'aprovado','aprovacao','aprovação','aprovacao_professor','ok','apto','apta'
+        ]);
 
-        // helper pra interpretar "Sim / apto / apta"
-        const isYes = (v) => {
-          if (!v) return false;
-          const s = String(v).toLowerCase();
-          return /sim|apto|apta|sim\./.test(s);
-        };
+        // NOVO: mapear diretamente as perguntas:
+        // "Apto (a) para mudar para ascensão?"
+        // "Apta para subir para Domínio?"
+        // "Apta para ser OVERPRIME?"
+        if (!novoNivelRaw) {
+          const ascAns  = pickByRegex(o, [/apto.*ascens/]);              // apto(a) ... ascensão
+          const domAns  = pickByRegex(o, [/apta?.*dom[ií]nio/]);         // apta ... domínio
+          const overAns = pickByRegex(o, [/apta?.*overprime/]);          // apta ... overprime
 
-        let upgradeNivel = null;
-        let upgradeDataISO = todayISO();
-
-        // Se vier da aba de professor (Form Responses 3), usamos as perguntas específicas
-        if (raw && raw.__tab === 'Form Responses 3') {
-          const ascRaw  = pickByRegex(o, [/apto.*ascensao/]);   // "Apto (a) para mudar para ascensão?"
-          const domRaw  = pickByRegex(o, [/apta?.*dominio/]);   // "Apta para subir para Domínio?"
-          const overRaw = pickByRegex(o, [/apta?.*overprime/]); // "Apta para ser OVERPRIME?"
-
-          // hierarquia: OverPrime > Domínio > Ascensão
-          if (isYes(overRaw))      upgradeNivel = 'OverPrime';
-          else if (isYes(domRaw))  upgradeNivel = 'Domínio';
-          else if (isYes(ascRaw))  upgradeNivel = 'Ascensão';
-
-          const dataDecRaw = pick(o, ['data_decisao','data_upgrade','data_mudanca','data da decisao','data']);
-          upgradeDataISO = toISODateMaybe(dataDecRaw) || toISODateMaybe(base.ultimoTreino) || todayISO();
-        } else {
-          // fallback genérico (caso você um dia use outro tipo de form de professor)
-          const novoNivelRaw = pick(o, [
-            'novo_nivel','novonivel','nivel_novo','nivel aprovado','nivel_aprovado','nivel_definido'
-          ]);
-          const aprovadoRaw = pick(o, [
-            'aprovado','aprovacao','aprovação','aprovacao_professor','ok','apto','apta'
-          ]);
-          const dataDecRaw  = pick(o, ['data_decisao','data_upgrade','data_mudanca','data da decisao']);
-          if (novoNivelRaw) {
-            const aprovado = /^s(?!$)|^sim$|^ok$|^true$|^aprov/i.test(String(aprovadoRaw||''));
-            if (aprovado) {
-              upgradeNivel = normNivel(novoNivelRaw) || novoNivelRaw;
-              upgradeDataISO = toISODateMaybe(dataDecRaw) || todayISO();
-            }
+          // se mais de uma estiver marcada, prioriza o nível mais alto
+          if (overAns) {
+            novoNivelRaw = 'OverPrime';
+            aprovadoRaw  = overAns;
+          } else if (domAns) {
+            novoNivelRaw = 'Domínio';
+            aprovadoRaw  = domAns;
+          } else if (ascAns) {
+            novoNivelRaw = 'Ascensão';
+            aprovadoRaw  = ascAns;
           }
         }
 
-        if (upgradeNivel) {
-          base._upgradeEvent = {
-            aprovado: true,
-            novoNivel: upgradeNivel,
-            data: upgradeDataISO,
-            obs: obsProf || ''
-          };
+        const dataDecRaw  = pick(o, ['data_decisao','data_upgrade','data_mudanca','data da decisao']);
+        const obsProf     = pick(o, ['observacao_professor','observacao','comentario']);
+
+        if (novoNivelRaw) {
+          const aprovado = /^s(?!$)|^sim$|^ok$|^true$|^aprov/i.test(String(aprovadoRaw||''));
+          const novoNivel = normNivel(novoNivelRaw) || novoNivelRaw;
+          const dataUpISO = toISODateMaybe(dataDecRaw) || todayISO();
+          base._upgradeEvent = { aprovado, novoNivel, data: dataUpISO, obs: obsProf || '' };
         }
 
         // --- Pontuação automática fallback ---
@@ -662,7 +649,7 @@ html,body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,s
 .card{background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.01));border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;box-shadow:var(--shadow);backdrop-filter:saturate(1.1) blur(2px);margin-bottom:14px;}
 .input{width:100%;height:44px;border-radius:12px;padding:0 12px;border:1px solid var(--border);background:#111316;color:#e9eaee;font-size:.95rem;}
 .input:focus{outline:none;border-color:#3a3f47;box-shadow:0 0 0 2px rgba(198,40,40,.12);}
-.btn{--h:44px;min-width:44px;height:var(--h);line-height:var(--h);display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:12px;padding:0 14px;font-weight:600;letter-spacing:.2px;border:1px solid var(--border);background:#14161a;color:#e9eaee;transition:transform .08s.ease,filter .12s ease,background .2s ease,border-color .2s.ease;cursor:pointer;text-decoration:none;}
+.btn{--h:44px;min-width:44px;height:var(--h);line-height:var(--h);display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:12px;padding:0 14px;font-weight:600;letter-spacing:.2px;border:1px solid var(--border);background:#14161a;color:#e9eaee;transition:transform .08s.ease,filter .12s.ease,background .2s ease,border-color .2s.ease;cursor:pointer;text-decoration:none;}
 .btn:hover{filter:brightness(1.08);} .btn:active{transform:translateY(1px);}
 .btn-primary{background:var(--primary);border-color:var(--primary-2);color:#fff;} .btn-primary:hover{background:var(--primary-2);} .btn-primary:active{background:var(--primary-3);}
 .btn-outline{background:transparent;} .btn-danger{background:#a32622;border-color:#8e1f1b;color:#fff;} .btn-success{background:var(--ok);border-color:#1a7b46;color:#fff;}
